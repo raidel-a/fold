@@ -215,9 +215,25 @@ export const DEFAULT_USAGE: UsageTotals = {
 
 // --- Messages ---
 
+/**
+ * Progress while a fold runs. Broadcast rather than returned, because the reply to
+ * `organize` only arrives once the whole thing finishes, and 8 seconds of silence
+ * reads as a hang.
+ */
+export interface FoldProgress {
+  /** Human-readable phase, e.g. "Reading tabs" or "Grouping 60 of 140". */
+  label: string;
+  /** 0 to 1, or null when the total is not yet known. */
+  fraction: number | null;
+  /** Tabs processed so far, when known. */
+  done?: number;
+  total?: number;
+}
+
 export type MessageType =
   | { type: 'organize' }
   | { type: 'organize-ungrouped' }
+  | { type: 'fold-progress'; progress: FoldProgress }
   | { type: 'apply'; suggestions: GroupSuggestion[] }
   | { type: 'undo' }
   | { type: 'find-duplicates' }

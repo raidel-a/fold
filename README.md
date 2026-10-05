@@ -107,6 +107,7 @@ swiftc -O scripts/MakeIcons.swift -o scripts/make-icons
 ```bash
 node scripts/shot.mjs dark      # screenshots into shots/
 node scripts/shot.mjs light
+node scripts/shot-progress.mjs "$PWD/extension/dist" "Grouping 60 of 140" 0.43
 ```
 
 ## Verifying

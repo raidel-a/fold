@@ -15,10 +15,22 @@
   That is the schema's job now.
 
 ### Added
+- **Progress during a fold.** A fold spends most of its time waiting on the model,
+  and the status line said nothing for eight seconds, which reads as a hang. The
+  worker now broadcasts each phase — "Reading tabs", "Grouping 60 of 140" — and the
+  popup shows a progress bar under the status line. It is determinate once the tab
+  count is known and sweeps only while it is not, since a bar that guesses a
+  percentage is worse than one that admits it does not know.
 - Chunking tests. `CHUNK_SIZE` and the merge path had no coverage: the existing
   "50+ tabs" test built exactly one chunk's worth of prompt and never exercised
   a merge. Now covers split sizes, per-tab assignment across chunks, token
   accumulation, and the group cap under disagreeing chunks.
+- `scripts/shot-progress.mjs` captures the popup's real progress listener and
+  screenshots it mid-fold, for both bar states.
+
+### Fixed
+- The empty state no longer claims "Nothing folded yet" while a fold is running.
+- A failed progress broadcast can no longer abort the fold it was reporting on.
 
 ## [1.0.0] - 2026-10-05
 ### Changed

@@ -180,4 +180,127 @@ describe('Popup Page', () => {
     expect(document.getElementById('status')?.textContent).toBe('Native host unavailable');
     expect(document.getElementById('status')?.dataset.tone).toBe('stop');
   });
+
+  // ---------- fold progress ----------
+
+  /** Delivers a worker broadcast to whatever the popup registered. */
+  async function emitProgress(progress: Record<string, unknown>) {
+    await (chrome.runtime.onMessage as any).callListeners({ type: 'fold-progress', progress });
+  }
+
+  it('stays quiet until the worker reports something', async () => {
+    await loadPopup();
+
+    const bar = document.getElementById('progress') as HTMLDivElement;
+    expect(bar.hidden).toBe(true);
+  });
+
+  it('shows an indeterminate bar while the tab count is unknown', async () => {
+    await loadPopup();
+
+    await emitProgress({ label: 'Reading tabs', fraction: 0 });
+    await tick(2);
+
+    const bar = document.getElementById('progress') as HTMLDivElement;
+    expect(bar.hidden).toBe(false);
+    // A phase with no honest total must not claim a percentage.
+    expect(bar.dataset.mode).toBe('determinate');
+    expect(document.getElementById('status')?.textContent).toBe('Reading tabs');
+  });
+
+  it('shows no percentage while the fraction is null', async () => {
+    await loadPopup();
+
+    await emitProgress({ label: 'Grouping', fraction: null });
+    await tick(2);
+
+    const bar = document.getElementById('progress') as HTMLDivElement;
+    expect(bar.dataset.mode).toBe('indeterminate');
+    expect(bar.hasAttribute('aria-valuenow')).toBe(false);
+  });
+
+  it('scales the bar and reports a percentage once determinate', async () => {
+    await loadPopup();
+
+    await emitProgress({ label: 'Grouping 60 of 140', fraction: 60 / 140, done: 60, total: 140 });
+    await tick(2);
+
+    const bar = document.getElementById('progress') as HTMLDivElement;
+    const fill = document.getElementById('progress-fill') as HTMLSpanElement;
+    expect(bar.dataset.mode).toBe('determinate');
+    expect(bar.getAttribute('aria-valuenow')).toBe('43');
+    expect(fill.style.transform).toBe('scaleX(0.43)');
+    expect(document.getElementById('status')?.textContent).toBe('Grouping 60 of 140');
+  });
+
+  it('clamps a fraction outside 0 to 1', async () => {
+    await loadPopup();
+
+    await emitProgress({ label: 'Finishing', fraction: 4 });
+    await tick(2);
+    expect(document.getElementById('progress')!.getAttribute('aria-valuenow')).toBe('100');
+
+    await emitProgress({ label: 'Reading tabs', fraction: -1 });
+    await tick(2);
+    expect(document.getElementById('progress')!.getAttribute('aria-valuenow')).toBe('0');
+  });
+
+  it('does not claim nothing is folded while a fold is running', async () => {
+    // "Nothing folded yet" under a progress bar reporting progress reads as a
+    // broken panel, not a busy one.
+    // The helper installs the spy on the module instance popup.ts will import.
+    await loadPopup(undefined, []);
+    expect(document.querySelector('.empty-title')).toBeTruthy();
+
+    await emitProgress({ label: 'Grouping 60 of 140', fraction: 0.4 });
+    expect(document.querySelector('.empty-title')).toBeFalsy();
+  });
+
+  it('restores the empty state when a fold returns nothing', async () => {
+    await loadPopup(undefined, []);
+
+    (chrome.runtime.sendMessage as any).mockImplementation((msg: any, cb: Function) => {
+      if (msg.type === 'get-stats') return cb({ stats: {} });
+      if (msg.type === 'organize') return cb({ suggestions: [] });
+      cb({ status: 'done' });
+    });
+
+    (document.getElementById('organize') as HTMLButtonElement).click();
+    await tick();
+
+    expect(document.querySelector('.empty-title')?.textContent).toBe('Nothing folded yet');
+  });
+
+  it('hides the bar once the fold returns', async () => {
+    await loadPopup();
+
+    (chrome.runtime.sendMessage as any).mockImplementation((msg: any, cb: Function) => {
+      if (msg.type === 'get-stats') return cb({ stats: {} });
+      if (msg.type === 'organize') {
+        // Synchronous on purpose: the mock's callback style has no place to await.
+        void emitProgress({ label: 'Grouping 60 of 140', fraction: 0.5 });
+        return cb({ suggestions: [{ name: 'Dev', color: 'blue', tabs: [{ id: 1, url: 'https://a.com', title: 'A' }] }] });
+      }
+      cb({ status: 'done' });
+    });
+
+    (document.getElementById('organize') as HTMLButtonElement).click();
+    await tick();
+
+    const bar = document.getElementById('progress') as HTMLDivElement;
+    expect(bar.hidden).toBe(true);
+    // The result must win over any progress text left on screen.
+    expect(document.getElementById('status')?.textContent).toContain('1 groups suggested');
+  });
+
+  it('ignores messages that are not progress', async () => {
+    await loadPopup();
+
+    const before = document.getElementById('status')?.textContent;
+    await (chrome.runtime.onMessage as any).callListeners({ type: 'get-stats' });
+    await tick(2);
+
+    expect(document.getElementById('status')?.textContent).toBe(before);
+    expect((document.getElementById('progress') as HTMLDivElement).hidden).toBe(true);
+  });
 });

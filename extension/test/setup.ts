@@ -149,12 +149,14 @@ let groupIdCounter = 100;
     onInstalled: new MockEvent(),
     lastError: undefined,
     sendMessage: vi.fn(),
-    // Native messaging is the only LLM transport. Default to a successful reply so
-    // tests that are not about the model still exercise real code paths; suites
-    // covering the transport override this.
+    // Native messaging is the only model transport. Default to a successful reply
+    // so tests that are not about the model still exercise real code paths; suites
+    // covering the transport override this. The group op answers with decoded
+    // groups, which is what the host returns under a generation schema.
     sendNativeMessage: vi.fn((_host: string, msg: any, cb: Function) => {
       if (msg?.op === 'status') cb({ ok: true, available: true });
-      else cb({ ok: true, content: '[]', inputTokens: 0, outputTokens: 0 });
+      else if (msg?.op === 'group') cb({ ok: true, groups: [], inputTokens: 0, outputTokens: 0 });
+      else cb({ ok: true, content: 'OK', inputTokens: 0, outputTokens: 0 });
     }),
     openOptionsPage: vi.fn(() => Promise.resolve()),
   },

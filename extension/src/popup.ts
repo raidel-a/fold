@@ -12,6 +12,8 @@ const btnApply = $<HTMLButtonElement>('apply-all');
 const btnUndo = $<HTMLButtonElement>('undo');
 const btnSettings = $<HTMLButtonElement>('open-settings');
 const status = $<HTMLDivElement>('status');
+const progress = $<HTMLDivElement>('progress');
+const progressFill = $<HTMLSpanElement>('progress-fill');
 const container = $<HTMLDivElement>('suggestions');
 const searchInput = $<HTMLInputElement>('search');
 const tabSearchResults = $<HTMLDivElement>('tab-search-results');
@@ -51,10 +53,65 @@ function esc(s: string): string {
  */
 type StatusReply = Omit<Extract<MessageType, { type: 'status' }>, 'type'>;
 
+/** Listens for the worker's progress broadcasts and mirrors them into the status line. */
+function onWorkerMessage(handler: (msg: MessageType) => void): void {
+  const listener = (msg: MessageType) => {
+    // Ignore anything aimed at the worker rather than at a page.
+    if (msg?.type === 'fold-progress') handler(msg);
+  };
+  chrome.runtime.onMessage.addListener(listener);
+}
+
+// --- Fold progress ---
+
+/**
+ * A fold spends most of its time waiting on the model, with nothing to show. The
+ * worker broadcasts each phase, and a determinate bar appears only once the tab
+ * count is known: an indeterminate sweep that then resolves into a real fraction
+ * is worse than no bar at all.
+ */
+let progressActive = false;
+
+function showProgress({ label, fraction }: { label: string; fraction: number | null }) {
+  if (!progressActive) {
+    progressActive = true;
+    progress.hidden = false;
+    // Clear a stale empty state, which would otherwise sit under the bar claiming
+    // nothing has been folded.
+    container.innerHTML = '';
+  }
+  status.textContent = label;
+  status.dataset.tone = 'busy';
+
+  if (fraction === null) {
+    progress.dataset.mode = 'indeterminate';
+    progress.removeAttribute('aria-valuenow');
+  } else {
+    const percent = Math.round(Math.min(1, Math.max(0, fraction)) * 100);
+    progress.dataset.mode = 'determinate';
+    progress.setAttribute('aria-valuenow', String(percent));
+    progressFill.style.transform = `scaleX(${percent / 100})`;
+  }
+}
+
+function stopProgress() {
+  if (!progressActive) return;
+  progressActive = false;
+  progress.hidden = true;
+  delete progress.dataset.mode;
+  // Restore the empty state only if the fold produced nothing. Otherwise the
+  // caller renders suggestions immediately after.
+  if (!currentSuggestions.length && !tabSearchResults.children.length) renderEmptyState();
+}
+
 function sendMsg(msg: MessageType): Promise<StatusReply | undefined> {
   return new Promise(resolve =>
     chrome.runtime.sendMessage(msg, resolve as (reply: StatusReply) => void));
 }
+
+onWorkerMessage(msg => {
+  if (msg.type === 'fold-progress') showProgress(msg.progress);
+});
 
 function deepCloneSuggestions(suggestions: GroupSuggestion[]): GroupSuggestion[] {
   return suggestions.map(g => ({
@@ -86,8 +143,14 @@ function computeCorrections(original: GroupSuggestion[], current: GroupSuggestio
   return corrections;
 }
 
-/** Shown when nothing is queued: explains the action instead of leaving a void. */
+/**
+ * Shown when nothing is queued: explains the action instead of leaving a void.
+ *
+ * Skipped while a fold is in flight. "Nothing folded yet" directly contradicts a
+ * progress bar reporting progress, and the panel looks broken rather than busy.
+ */
 function renderEmptyState() {
+  if (progressActive) return;
   container.innerHTML = `
     <div class="empty">
       <div class="empty-title">Nothing folded yet</div>
@@ -299,7 +362,7 @@ document.addEventListener('keydown', e => {
 // --- Core actions ---
 
 async function doOrganize(ungroupedOnly: boolean) {
-  setStatus('Reading tabs and grouping on-device…', 'busy');
+  setStatus('Reading tabs…', 'busy');
   btnOrganize.disabled = true;
   btnOrganizeUngrouped.disabled = true;
   container.innerHTML = '';
@@ -309,6 +372,8 @@ async function doOrganize(ungroupedOnly: boolean) {
 
   btnOrganize.disabled = false;
   btnOrganizeUngrouped.disabled = false;
+  // A stale tick could otherwise land after the result and overwrite it.
+  stopProgress();
 
   if (!res) {
     setStatus('No response from the worker — try again', 'stop');

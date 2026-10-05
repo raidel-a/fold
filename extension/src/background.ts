@@ -8,6 +8,7 @@ import type {
   Workspace,
   WorkspaceTab,
   CorrectionEntry,
+  FoldProgress,
   RejectionEntry,
   SnoozedTab,
 } from './types';
@@ -356,8 +357,15 @@ function rebuildContextMenus(): Promise<void> {
   return rebuild;
 }
 
-export async function organize(ungroupedOnly = false): Promise<{ suggestions?: GroupSuggestion[]; error?: string }> {
+export async function organize(
+  ungroupedOnly = false,
+  report?: (progress: FoldProgress) => void,
+): Promise<{ suggestions?: GroupSuggestion[]; error?: string }> {
   try {
+    // A fold takes seconds, most of it waiting on the model. Reporting each phase
+    // turns an unexplained pause into something the popup can show.
+    const phase = (label: string, fraction: number | null = null, extra: Partial<FoldProgress> = {}) =>
+      report?.({ label, fraction, ...extra });
     const [settings, affinity, domainRules, history, weightedAffinity, corrections, rejections] = await Promise.all([
       getSettings(),
       getAffinity(),
@@ -368,6 +376,7 @@ export async function organize(ungroupedOnly = false): Promise<{ suggestions?: G
       getRejections(),
     ]);
 
+    phase('Reading tabs', 0);
     let tabs = await getTabs();
     let existingGroupNames: string[] = [];
 
@@ -441,9 +450,18 @@ export async function organize(ungroupedOnly = false): Promise<{ suggestions?: G
 
     const historyHint = summarizeHistory(history);
     const result = tabsForLLM.length >= 2
-      ? await suggest(tabsForLLM, settings, affinity, domainRules, historyHint, extraHints)
+      ? await suggest(
+          tabsForLLM, settings, affinity, domainRules, historyHint, extraHints,
+          (done, total) => phase(
+            total > 0 ? `Grouping ${done} of ${total}` : 'Grouping',
+            total > 0 ? done / total : null,
+            { done, total },
+          ),
+        )
       // Keep a single leftover tab ungrouped instead of forcing an "Other" group.
       : { suggestions: [] as GroupSuggestion[], inputTokens: 0, outputTokens: 0 };
+
+    phase('Finishing', 1);
 
     const allSuggestions = [...preMatched, ...result.suggestions];
 
@@ -855,13 +873,23 @@ async function checkAutoTrigger(): Promise<void> {
 }
 
 chrome.runtime.onMessage.addListener((msg: MessageType, _sender, sendResponse) => {
-  if (msg.type === 'organize') {
-    organize().then(r => sendResponse({ type: 'status', status: r.error ? 'error' : 'done', ...r }));
-    return true;
-  }
-
-  if (msg.type === 'organize-ungrouped') {
-    organize(true).then(r => sendResponse({ type: 'status', status: r.error ? 'error' : 'done', ...r }));
+  if (msg.type === 'organize' || msg.type === 'organize-ungrouped') {
+    // Progress goes out as its own broadcast. The reply to this message cannot
+    // carry it, since that only arrives once the whole fold has finished.
+    const broadcast = (progress: FoldProgress) => {
+      // Wrapped rather than chained: with no popup open the send can reject, and
+      // a throw here would abort a fold the user is waiting on. Reporting
+      // progress is never worth failing the work over.
+      try {
+        void Promise.resolve(chrome.runtime.sendMessage({ type: 'fold-progress', progress }))
+          .catch(() => {});
+      } catch {
+        // Older Chrome builds can throw synchronously if nothing is listening.
+      }
+    };
+    organize(msg.type === 'organize-ungrouped', broadcast).then(r =>
+      sendResponse({ type: 'status', status: r.error ? 'error' : 'done', ...r })
+    );
     return true;
   }
 

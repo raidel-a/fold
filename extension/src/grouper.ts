@@ -339,6 +339,7 @@ export async function suggest(
   domainRules: DomainRule[] = [],
   historyHint = '',
   extraHints?: ExtraHints,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<{ suggestions: GroupSuggestion[], inputTokens: number, outputTokens: number }> {
   const { matched, remaining } = applyDomainRules(tabs, domainRules);
 
@@ -349,10 +350,14 @@ export async function suggest(
 
   let totalInput = 0;
   let totalOutput = 0;
+  let processed = 0;
   const chunkResults: GroupSuggestion[][] = [];
 
   for (const chunk of chunks) {
     const prompt = buildPrompt(chunk, remainingGroups, affinity, settings.maxTitleLength, historyHint, extraHints);
+    // Each chunk is a round trip that can take seconds, so report before it starts
+    // rather than after it lands: the wait is what needs explaining.
+    onProgress?.(processed, remaining.length);
     const result = await groupWithUsage(
       'You are a browser tab organizer. Group tabs by topic.',
       prompt,
@@ -362,6 +367,8 @@ export async function suggest(
       chunks.length > 1 ? coldStartTimeout() : undefined,
     );
     chunkResults.push(toSuggestions(result.groups, chunk, remainingGroups));
+    processed += chunk.length;
+    onProgress?.(processed, remaining.length);
     totalInput += result.inputTokens;
     totalOutput += result.outputTokens;
   }
