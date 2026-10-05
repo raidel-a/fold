@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 ### Changed
+- **Two settings that did nothing now do something.** `staleTabThresholdHours` and
+  `enableGroupDrift` had both been in the settings page since 1.0, wired to real
+  controls, persisted and clamped on every save, and read by no code at all. The
+  engines underneath them were complete and tested; nothing ever called them. Both
+  are described under Added.
+- Removed the `consolidate-windows` and `merge-split-suggestions` message handlers and
+  their functions, 66 lines between them. Neither had a sender anywhere in the
+  extension or the tests; `getMergeSplitSuggestions` was the single largest block of
+  unreachable code in the project at 47 lines.
+- Removed `tabActivationTimes` and the `chrome.tabs.onActivated` listener that existed
+  only to populate it. Written on every activation, evicted at 5,000 entries, deleted
+  on tab close, and never read.
+- The options autosave listener checked for `text`, `number`, and `password` inputs. All
+  16 elements it binds are `range`, `checkbox`, or `select`, so three of its four arms
+  were unreachable, and the `password` literal tripped a secret scanner on every scan
+  of the repository. Narrowed to the one input type actually present.
+- Dropped the orphan `cost-text` id from the popup footer, plus `--surface-window` and
+  `--shadow-popover`, neither of which any rule referenced. `--status-warn` was removed
+  in the same pass and then put back, because the drift notice turned out to want it.
 - **Grouping is now schema-constrained.** The native host describes the response
   shape with a Foundation Models `GenerationSchema` and returns decoded groups,
   instead of the model being asked for JSON in prose and the result dug out of a
@@ -15,6 +34,25 @@
   That is the schema's job now.
 
 ### Added
+- **Stale tabs are actually closed.** The `staleTabThresholdHours` slider had been in the
+  settings page since 1.0, and no code read it, so tabs accumulated indefinitely whatever
+  it was set to. A daily sweep reads it now. It sits behind a new "Purge stale tabs
+  daily" toggle that defaults **off**: closing tabs unattended is irreversible, so it
+  has to be something you opt into rather than something you opt out of. Pinned and
+  active tabs are never candidates. A "Close stale now" button beside the slider runs
+  the same sweep on demand, which is also the quickest way to see what it would do
+  before handing it a timer.
+- **Group drift detection does something.** The same shape of problem: `enableGroupDrift`
+  and its threshold were persisted, bound to a switch, and never read. Now checked on its
+  own daily schedule, offset six hours from the stale sweep so a large window is not
+  paying for two long sweeps back to back. A "Check for drift" button in the Learning
+  pane reports the verdict immediately and renders a per-group table (tab counts and
+  domains, widest group first) from the `get-group-stats` handler that had been built
+  and tested but never put on screen. The popup carries one clamped line naming what
+  drifted, read from a persisted report rather than a fresh sweep: the popup is destroyed
+  on close, and a sweep is far too much work to repeat on every open. It stays hidden
+  unless detection is on, a sweep has actually run, and it found something, so a report
+  left over from before the toggle was switched off cannot resurface.
 - **Progress during a fold.** A fold spends most of its time waiting on the model,
   and the status line said nothing for eight seconds, which reads as a hang. The
   worker now broadcasts each phase — "Reading tabs", "Grouping 60 of 140" — and the
@@ -29,6 +67,13 @@
   screenshots it mid-fold, for both bar states.
 
 ### Fixed
+- **The stale sweep queried `currentWindow`.** A service worker woken by an alarm has no
+  current window; the file already said as much in a comment on `getCurrentWindowId`, so
+  the query would have failed on the first alarm that fired, leaving the feature dead
+  in a harder-to-spot way than before. It enumerates windows now, which is also the right
+  scope for an unattended sweep. The existing unit test mocked `chrome.tabs.query` and so
+  passed regardless, because the function had never been run in the context it was
+  written for.
 - **`CHUNK_SIZE` reduced from 60 to 20.** The old value was a round number, not a
   measured one, and it exceeded the model's context window. A 60-tab chunk needs
   ~4975 prompt tokens at the default 80-character title length and ~8575 at the
