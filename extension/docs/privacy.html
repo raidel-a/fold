@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Fold On-Device Tab Organizer</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 0 auto; padding: 2rem 1rem; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.25rem; letter-spacing: -0.02em; line-height: 1.15; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid #e0e0e0; padding-bottom: 0.3rem; }
+  h3 { font-size: 1rem; margin-top: 1.5rem; }
+  ul { padding-left: 1.5rem; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; }
+  th { background: #f5f5f5; }
+  code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
+  a { color: #1a73e8; }
+  .updated { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+  .callout { border: 1px solid #d5d9e2; border-left: 3px solid #1a73e8; background: #f7f9ff; padding: 0.75rem 1rem; border-radius: 4px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy — Fold On-Device Tab Organizer</h1>
+<p class="updated"><strong>Last updated:</strong> October 5, 2026</p>
+
+<h2>Summary</h2>
+
+<p>Fold has no servers and no third parties. Tab grouping runs entirely on your Mac
+using the language model built into macOS, so tab titles and URLs never leave your
+device. The extension declares no host permissions and holds no API keys.</p>
+
+<h2>Data Collection</h2>
+
+<p>Fold does <strong>not</strong> collect:</p>
+<ul>
+  <li>Personal information (name, email, account details)</li>
+  <li>Browsing history beyond the current window's open tabs</li>
+  <li>Analytics, telemetry, or usage tracking data</li>
+  <li>Cookies or cross-site tracking identifiers</li>
+</ul>
+
+<h2>Data Stored Locally</h2>
+
+<p>The following data is stored in your browser's <code>chrome.storage</code> area and
+never leaves your device:</p>
+
+<ul>
+  <li><strong>Extension settings</strong> — behavior preferences and UI options</li>
+  <li><strong>Domain rules</strong> — custom rules you create for grouping specific domains</li>
+  <li><strong>Learning data</strong> — domain affinity scores, correction history, rejection memory, and co-occurrence patterns</li>
+  <li><strong>Pinned groups</strong> — group names you've pinned to survive re-organization</li>
+  <li><strong>Usage statistics</strong> — organize count, tabs grouped count, and model token totals</li>
+</ul>
+
+<p>You can export or delete all stored data at any time from the extension's settings page.</p>
+
+<h2>Data Sent to Third Parties</h2>
+
+<p class="callout"><strong>None.</strong> There is no cloud provider to configure and no
+API key to store.</p>
+
+<p>Tab titles and URLs are passed to a native messaging host on your own machine, which
+hands them to Apple's Foundation Models framework. That host makes no network requests.
+The extension itself contacts no hosts: <code>manifest.json</code> declares no
+<code>host_permissions</code>.</p>
+
+<p>The Foundation Models framework may download its model assets from Apple the first
+time it is used, the same way any on-device system feature does. That traffic comes from
+macOS, not from this extension, and carries no browsing data.</p>
+
+<h2>The native host</h2>
+
+<p>Fold cannot call Swift frameworks directly from a browser extension, so it ships with
+a small native messaging host (<code>../native/FoldAppleAIHost.swift</code>) that you
+compile and install yourself via <code>scripts/install-native-host.sh</code>.</p>
+
+<ul>
+  <li>It runs only while the browser asks it for a response.</li>
+  <li>It reads requests from the browser and writes replies back. Nothing else.</li>
+  <li>It contains no analytics, no logging, and no network code.</li>
+</ul>
+
+<p>You can read the whole of it in one file.</p>
+
+<h2>Permissions</h2>
+
+<table>
+  <thead><tr><th>Permission</th><th>Why it's needed</th></tr></thead>
+  <tbody>
+    <tr><td><code>tabs</code></td><td>Read tab titles and URLs to generate grouping suggestions</td></tr>
+    <tr><td><code>tabGroups</code></td><td>Create, modify, and remove tab groups</td></tr>
+    <tr><td><code>storage</code></td><td>Save your settings and learning data locally</td></tr>
+    <tr><td><code>alarms</code></td><td>Run scheduled re-organization and auto-organize checks</td></tr>
+    <tr><td><code>contextMenus</code></td><td>Add right-click menu options for quick access</td></tr>
+    <tr><td><code>windows</code></td><td>Support consolidate-windows feature</td></tr>
+    <tr><td><code>nativeMessaging</code></td><td>Talk to the local Apple AI host process</td></tr>
+  </tbody>
+</table>
+
+<p>No host permissions are requested, so the extension cannot reach the network at all.</p>
+
+<h2>Children's Privacy</h2>
+
+<p>Fold is not directed at children under 13 and does not knowingly collect data from children.</p>
+
+<h2>Changes to This Policy</h2>
+
+<p>If this policy is updated, the changes will be published alongside the extension with an
+updated date. Continued use of the extension after changes constitutes acceptance.</p>
+
+<h2>Contact</h2>
+
+<p>Questions: <a href="https://github.com/raidel-a/fold/issues">open an issue</a>.</p>
+
+</body>
+</html>

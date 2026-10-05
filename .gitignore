@@ -1,0 +1,7 @@
+node_modules/
+extension/node_modules/
+extension/dist/
+native/fold-appleai-host
+shots/
+*.log
+scripts/make-icons

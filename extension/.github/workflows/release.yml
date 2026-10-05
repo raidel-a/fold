@@ -1,0 +1,51 @@
+name: Release
+
+# Trigger: push a version tag like v1.0.0
+# git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run: ./extension
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package zip
+        run: npm run package
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: fold-extension.zip
+          generate_release_notes: true
+
+      - name: Explain the native host requirement
+        run: |
+          cat >>"$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Requires a per-machine native host
+
+          This extension calls Apple Foundation Models, which is not reachable from a
+          browser extension sandbox. Anyone installing it must first run
+          `scripts/install-native-host.sh` on their own machine, then load
+          `extension/dist` unpacked. A downloaded zip alone will not work.
+          EOF

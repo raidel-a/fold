@@ -1,0 +1,22 @@
+{
+  "name": "fold",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "package": "rm -f fold-extension.zip && cd dist && (xattr -cr . 2>/dev/null || true) && zip -rX ../fold-extension.zip . -x '*.map' && cd .. && echo 'Packaged → fold-extension.zip'",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.38",
+    "@vitest/coverage-v8": "^2.1.0",
+    "esbuild": "^0.24.0",
+    "jsdom": "^29.0.1",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "description": "Folds browser tabs into groups with the model built into macOS"
+}

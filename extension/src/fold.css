@@ -1,0 +1,248 @@
+/* Fold design system.
+ *
+ * macOS-native: system font, system accent color (injected from the native host),
+ * translucent materials, and light/dark that follows the OS. Values here are
+ * deliberately few and named by role, not by color, so the accent can change
+ * without touching component styles.
+ *
+ * The accent and group palette arrive at runtime via chrome.runtime
+ * .sendNativeMessage('com.fold.appleai', {op:'theme'}). Until they land, these
+ * are the macOS defaults for the current appearance.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ── Accent ─────────────────────────────────────────────────────────────
+   * Overwritten by --fold-accent from the host once it answers. */
+  --fold-accent: #007aff;
+  --fold-accent-fallback: #007aff;
+
+  /* ── Surfaces ───────────────────────────────────────────────────────────
+   * Translucent layers, heaviest for structural chrome. Never stack a light
+   * translucent surface on another: legibility collapses. */
+  --surface-window: light-dark(transparent, transparent);
+  --surface-sidebar: light-dark(rgba(246, 246, 248, 0.72), rgba(38, 38, 41, 0.6));
+  --surface-content: light-dark(rgba(255, 255, 255, 0.72), rgba(28, 28, 30, 0.72));
+  --surface-raised: light-dark(rgba(255, 255, 255, 0.86), rgba(44, 44, 46, 0.86));
+  --surface-well: light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.24));
+  --surface-hover: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.07));
+  --surface-pressed: light-dark(rgba(0, 0, 0, 0.09), rgba(255, 255, 255, 0.11));
+
+  /* ── Controls ────────────────────────────────────────────────────────────
+   * A knob or thumb is judged against its own track, not against the page, so
+   * it needs a face value distinct from the surfaces above. macOS keeps these
+   * near-white even in dark mode; matching that is what makes them findable. */
+  --control-face: light-dark(#ffffff, #e6e6ea);
+  --control-ring: light-dark(rgba(0, 0, 0, 0.26), rgba(0, 0, 0, 0.55));
+  --control-track: light-dark(rgba(0, 0, 0, 0.13), rgba(255, 255, 255, 0.16));
+  /* An overlay rather than a fixed colour, so a control sitting on a card
+   * separates from it in either scheme. */
+  --control-fill: light-dark(rgba(0, 0, 0, 0.055), rgba(255, 255, 255, 0.11));
+
+  /* Hairlines. Lighter surfaces get a brighter top edge, the way light catches
+   * the top of a material. */
+  --hairline: light-dark(rgba(0, 0, 0, 0.11), rgba(255, 255, 255, 0.11));
+  --hairline-strong: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.2));
+  --highlight-edge: light-dark(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.14));
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --label-primary: light-dark(rgba(0, 0, 0, 0.88), rgba(255, 255, 255, 0.92));
+  --label-secondary: light-dark(rgba(0, 0, 0, 0.56), rgba(255, 255, 255, 0.62));
+  --label-tertiary: light-dark(rgba(0, 0, 0, 0.36), rgba(255, 255, 255, 0.4));
+  --label-on-accent: #fff;
+
+  /* ── Status ────────────────────────────────────────────────────────────── */
+  --status-ready: light-dark(#1d9e4b, #32d74b);
+  --status-warn: light-dark(#b25000, #ff9f0a);
+  --status-stop: light-dark(#d0342c, #ff453a);
+
+  /* ── Radii ───────────────────────────────────────────────────────────────
+   * macOS uses continuous corners; these approximate the same softness. */
+  --radius-control: 7px;
+  --radius-field: 8px;
+  --radius-card: 12px;
+  --radius-window: 14px;
+
+  /* ── Depth ───────────────────────────────────────────────────────────────
+   * Bigger surfaces read as thicker: more blur, deeper shadow. */
+  --blur-chrome: 28px saturate(180%);
+  --blur-content: 18px saturate(160%);
+  --shadow-card: 0 1px 2px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.4)),
+                 0 4px 16px light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.3));
+  --shadow-popover: 0 2px 6px light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.5)),
+                    0 12px 32px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.4));
+
+  /* ── Motion ──────────────────────────────────────────────────────────────
+   * Springs expressed as durations, since CSS has no spring. UI settles fast;
+   * anything the user physically moves gets the longer curve. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-quick: 100ms;
+  --duration-base: 200ms;
+  --duration-deliberate: 320ms;
+
+  /* ── Type ────────────────────────────────────────────────────────────────
+   * SF carries its own optical sizing and tracking tables, so override only
+   * where a size genuinely wants different tracking. */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* The host reports the effective appearance; this keeps CSS and native in step
+ * even if the browser's own media query lags. */
+:root[data-appearance='dark'] { color-scheme: dark; }
+:root[data-appearance='light'] { color-scheme: light; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-ui);
+  /* -apple-system already resolves to SF; Chromium's own defaults are worse. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color: var(--label-primary);
+  background: light-dark(#f2f2f7, #1c1c1e);
+}
+
+/* ── Shared controls ──────────────────────────────────────────────────────── */
+
+.fold-btn {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 590;
+  /* SF text sizes read slightly loose at body scale. */
+  letter-spacing: -0.005em;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  padding: 6px 13px;
+  cursor: default;               /* macOS buttons are not web buttons */
+  color: var(--label-primary);
+  /* An overlay on whatever surface it sits on, so a button inside a card is
+   * visibly a control rather than part of the card. */
+  background: var(--control-fill);
+  box-shadow: 0 0.5px 1.5px light-dark(rgba(0, 0, 0, 0.09), rgba(0, 0, 0, 0.4));
+  transition:
+    background-color var(--duration-quick) var(--ease-out),
+    transform var(--duration-quick) var(--ease-out);
+  /* Feedback on press, not on release: the control feels attached to the
+   * click rather than reporting it a frame late. */
+}
+.fold-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--hairline-strong);
+}
+.fold-btn:active:not(:disabled) {
+  background: var(--surface-pressed);
+  transform: scale(0.97);
+}
+.fold-btn:disabled { opacity: 0.4; }
+.fold-btn:focus-visible {
+  outline: 2px solid var(--fold-accent);
+  outline-offset: 2px;
+}
+
+.fold-btn--primary {
+  background: var(--fold-accent);
+  color: var(--label-on-accent);
+  box-shadow: 0 0.5px 2px light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.5));
+}
+.fold-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fold-accent) 88%, black);
+}
+.fold-btn--primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--fold-accent) 78%, black);
+}
+
+.fold-btn--plain {
+  background: transparent;
+  box-shadow: none;
+  color: var(--label-secondary);
+}
+.fold-btn--plain:hover:not(:disabled) { background: var(--surface-hover); color: var(--label-primary); }
+
+.fold-field {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--label-primary);
+  background: var(--control-fill);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-field);
+  padding: 6px 10px;
+  box-shadow: inset 0 0.5px 1px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+  transition: border-color var(--duration-quick) var(--ease-out),
+              box-shadow var(--duration-quick) var(--ease-out);
+  min-width: 0;
+}
+.fold-field::placeholder { color: var(--label-tertiary); }
+.fold-field:focus {
+  outline: none;
+  border-color: var(--fold-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fold-accent) 25%, transparent);
+}
+
+/* Status pill: a dot plus a word. The dot pulses only while actually working. */
+.fold-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 590;
+  color: var(--label-secondary);
+  white-space: nowrap;
+}
+.fold-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--label-tertiary);
+  flex-shrink: 0;
+}
+.fold-status[data-state='ready']::before { background: var(--status-ready); }
+.fold-status[data-state='working']::before {
+  background: var(--fold-accent);
+  animation: fold-pulse 1.4s var(--ease-in-out) infinite;
+}
+.fold-status[data-state='stopped']::before { background: var(--status-stop); }
+
+@keyframes fold-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+
+/* ── Accessibility ───────────────────────────────────────────────────────────
+ * Reduced motion keeps the state change and drops the movement: the pulse
+ * becomes a static dot, entrances become cross-fades. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .fold-status[data-state='working']::before { transform: none; opacity: 1; }
+  .fold-btn:active:not(:disabled) { transform: none; }
+}
+
+/* Frosted surfaces lose legibility when transparency is reduced, so go opaque
+ * and let the hairline carry the separation. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface-sidebar: light-dark(#f3f3f6, #26262a);
+    --surface-content: light-dark(#ffffff, #1c1c1e);
+    --surface-raised: light-dark(#ffffff, #2c2c2e);
+    --blur-chrome: none;
+    --blur-content: none;
+  }
+}
+
+/* Near-solid backgrounds need a defined edge to stay readable. */
+@media (prefers-contrast: more) {
+  :root {
+    --hairline: light-dark(rgba(0, 0, 0, 0.5), rgba(255, 255, 255, 0.5));
+    --hairline-strong: light-dark(rgba(0, 0, 0, 0.7), rgba(255, 255, 255, 0.7));
+    --label-secondary: light-dark(rgba(0, 0, 0, 0.78), rgba(255, 255, 255, 0.82));
+    --label-tertiary: light-dark(rgba(0, 0, 0, 0.62), rgba(255, 255, 255, 0.66));
+  }
+}

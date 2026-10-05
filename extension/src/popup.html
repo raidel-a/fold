@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Fold</title>
+<link rel="stylesheet" href="fold.css" />
+<style>
+  body {
+    /* A popup is a panel, so it gets the content material: lighter than the
+       sidebar it would sit in on the settings page. */
+    width: 340px;
+    font-size: 13px;
+    padding: 0;
+    background: var(--surface-content);
+    backdrop-filter: var(--blur-content);
+  }
+
+  /* ─── Header ──────────────────────────────────────────────────────────────
+   * Translucent and fixed to the top, so the card list scrolls underneath it
+   * rather than being pushed by an opaque bar. */
+  .chrome {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--surface-content);
+    backdrop-filter: var(--blur-chrome);
+    /* A hairline that reads as the material's lit edge, not a divider. */
+    box-shadow: 0 0.5px 0 var(--hairline);
+  }
+
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 8px;
+  }
+
+  .wordmark {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 640;
+    /* Display type wants negative tracking. */
+    letter-spacing: -0.022em;
+    line-height: 1.1;
+  }
+
+  .spacer { flex: 1; }
+
+  /* Square icon button, macOS metrics: 24pt hit target, no hover spin. */
+  .icon-btn {
+    appearance: none;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--label-secondary);
+    font-size: 13px;
+    line-height: 1;
+    cursor: default;
+    transition: background-color var(--duration-quick) var(--ease-out);
+  }
+  .icon-btn:hover { background: var(--surface-hover); color: var(--label-primary); }
+  .icon-btn:active { background: var(--surface-pressed); }
+  .icon-btn:focus-visible { outline: 2px solid var(--fold-accent); outline-offset: -2px; }
+
+  /* ─── Actions ─────────────────────────────────────────────────────────────
+   * The primary action is full width and unmistakable; the secondary sits beside
+   * it at a third of the width. */
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    padding: 0 12px 10px;
+  }
+
+  .fold-btn--fold {
+    font-size: 13px;
+    padding: 7px 14px;
+    border-radius: var(--radius-field);
+  }
+
+  .actions-secondary {
+    display: flex;
+    gap: 6px;
+    padding: 0 12px 10px;
+  }
+  /* Two equal secondary actions, each with an edge to press. */
+  .actions-secondary .fold-btn { flex: 1; }
+
+  /* ─── Status line ─────────────────────────────────────────────────────────
+   * Reserve the row so the layout doesn't jump when a message appears. */
+  .status {
+    min-height: 15px;
+    padding: 0 12px 8px;
+    font-size: 11.5px;
+    color: var(--label-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .status[data-tone='stop'] { color: var(--status-stop); }
+  .status[data-tone='ok'] { color: var(--status-ready); }
+  .status[data-tone='busy'] { color: var(--fold-accent); }
+
+  .search-row { padding: 0 12px 8px; }
+  /* Full-bleed to match the primary button's width, so the two controls above
+   * the cards share one edge. */
+  .search-row .fold-field { width: 100%; }
+  .search-row .fold-field::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+  /* ─── Scroll region ───────────────────────────────────────────────────────
+   * Cards live here and scroll under the sticky chrome. */
+  .scroll {
+    max-height: 320px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 12px;
+  }
+  .scroll:empty { padding: 0; }
+
+  /* Custom scrollbar: visible enough to grab, quiet enough to ignore. */
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb {
+    background: var(--hairline-strong);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  .scroll::-webkit-scrollbar-thumb:hover { background-clip: content-box; background-color: var(--label-tertiary); }
+
+  /* ─── Empty state ──────────────────────────────────────────────────────────
+   * Says what Fold is and what to do next, rather than showing nothing. */
+  .empty {
+    padding: 26px 18px 28px;
+    text-align: center;
+    color: var(--label-secondary);
+  }
+  .empty-title {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 590;
+    letter-spacing: -0.01em;
+    color: var(--label-primary);
+    margin-bottom: 4px;
+  }
+  .empty-body { font-size: 12px; line-height: 1.45; }
+
+  /* ─── Group cards ──────────────────────────────────────────────────────────
+   * A 3px leading edge carries the group color, matching the browser's own
+   * tab-group indicator, so the two read as the same thing. */
+  .card {
+    background: var(--surface-raised);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 9px 10px 9px 12px;
+    margin-bottom: 8px;
+    border-left: 3px solid var(--group-grey, var(--label-tertiary));
+    /* Enter along a consistent path: rise into place, never from the side. */
+    animation: card-enter var(--duration-deliberate) var(--ease-out) both;
+    transition: border-color var(--duration-base) var(--ease-out);
+  }
+  .card:hover { border-color: var(--hairline-strong); }
+  .card:focus-within { border-color: var(--fold-accent); }
+
+  @keyframes card-enter {
+    from { opacity: 0; transform: translateY(6px) scale(0.99); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .card-header { display: flex; align-items: center; gap: 6px; }
+
+  /* Inline-rename in place: the card is already named, so make the name the
+   * editable thing rather than adding a separate field. */
+  .group-name {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 590;
+    letter-spacing: -0.01em;
+    color: var(--label-primary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 2px 4px;
+    margin-left: -4px;
+    transition: background-color var(--duration-quick) var(--ease-out);
+  }
+  .group-name:hover { background: var(--surface-hover); }
+  .group-name:focus {
+    outline: none;
+    background: var(--surface-raised);
+    border-color: var(--fold-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--fold-accent) 22%, transparent);
+  }
+
+  /* Swatch, not a dropdown: the nine group colors are all visible at once, so
+   * picking is one click instead of two. */
+  .swatch {
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid var(--control-ring);
+    border-radius: 50%;
+    background: var(--group-grey, var(--label-tertiary));
+    cursor: default;
+    flex-shrink: 0;
+    transition: transform var(--duration-quick) var(--ease-out);
+  }
+  .swatch:active { transform: scale(0.9); }
+
+  .card-tools { display: flex; gap: 1px; }
+
+  .card-list {
+    list-style: none;
+    margin-top: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .card-list li {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--label-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-list li b { font-weight: 590; color: var(--label-primary); }
+  .card-list .search-match { color: var(--fold-accent); }
+
+  .apply-row { padding: 2px 12px 12px; }
+  .fold-btn--apply {
+    width: 100%;
+    font-size: 13px;
+    padding: 7px;
+    border-radius: var(--radius-field);
+  }
+
+  /* ─── Tab search results ─────────────────────────────────────────────────── */
+  .hit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: var(--radius-field);
+    cursor: default;
+  }
+  .hit:hover, .hit[data-active] { background: var(--surface-hover); }
+  .hit-main { flex: 1; min-width: 0; }
+  .hit-title {
+    display: block;
+    font-size: 11.5px;
+    color: var(--label-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hit-group {
+    font-size: 10.5px;
+    color: var(--label-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .hit-none { padding: 10px 4px; font-size: 11.5px; color: var(--label-tertiary); text-align: center; }
+
+  /* ─── Footer ───────────────────────────────────────────────────────────────
+   * Quiet. It reports what happened, not what to do. */
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px 8px;
+    font-size: 10.5px;
+    color: var(--label-tertiary);
+    background: var(--surface-sidebar);
+    box-shadow: inset 0 0.5px 0 var(--highlight-edge);
+    /* Tabular figures stop the footer twitching as counts change. */
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .chrome, .footer { backdrop-filter: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="titlebar">
+    <span class="wordmark">Fold</span>
+    <span class="fold-status" id="model-status" data-state="working">On-device</span>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="open-settings" title="Settings" aria-label="Settings">
+      <!-- Inline SVG rather than an emoji: emoji render in color and ignore the
+           interface's monochrome palette. Sliders, not a cog: it reads as
+           "adjust" at 14px, where a gear turns to mush. -->
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+           stroke-width="1.4" stroke-linecap="round" aria-hidden="true" focusable="false">
+        <path d="M2.5 4.5h4M9.5 4.5h4M2.5 11.5h2M7.5 11.5h6" />
+        <circle cx="8" cy="4.5" r="1.6" />
+        <circle cx="6" cy="11.5" r="1.6" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="actions">
+    <button class="fold-btn fold-btn--primary fold-btn--fold" id="organize" aria-label="Organize all tabs">Fold all tabs</button>
+  </div>
+
+  <div class="actions-secondary">
+    <button class="fold-btn fold-btn--plain" id="organize-ungrouped" aria-label="Organize ungrouped tabs only">Ungrouped only</button>
+    <button class="fold-btn fold-btn--plain" id="undo" aria-label="Undo last grouping">Undo</button>
+  </div>
+</header>
+
+<div class="status" id="status" role="status" aria-live="polite"></div>
+
+<div class="search-row">
+  <input class="fold-field" type="search" id="search" placeholder="Search tabs" aria-label="Search tabs" />
+</div>
+
+<div class="scroll" id="tab-search-results"></div>
+<div class="scroll" id="suggestions"></div>
+
+<div class="apply-row">
+  <button class="fold-btn fold-btn--primary fold-btn--apply" id="apply-all" hidden>Apply groups</button>
+</div>
+
+<footer class="footer">
+  <span id="stats-text"></span>
+  <span class="spacer"></span>
+  <span id="cost-text">Nothing leaves this Mac</span>
+</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>
