@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- **Grouping is now schema-constrained.** The native host describes the response
+  shape with a Foundation Models `GenerationSchema` and returns decoded groups,
+  instead of the model being asked for JSON in prose and the result dug out of a
+  code fence with a regex. Removes a whole failure mode: one malformed response
+  used to abort the entire fold with a parse error, and there was no retry.
+  Measured 367 → 302 input tokens per fold, since the format rules left the prompt.
+- `maxGroups` is now enforced after merging chunks. Chunks are grouped
+  independently, so merging on name alone could return more groups than the user
+  asked for; the smallest are folded into "Other" until the cap holds.
+- The grouper prompt no longer restates the JSON format or lists the colours.
+  That is the schema's job now.
+
+### Added
+- Chunking tests. `CHUNK_SIZE` and the merge path had no coverage: the existing
+  "50+ tabs" test built exactly one chunk's worth of prompt and never exercised
+  a merge. Now covers split sizes, per-tab assignment across chunks, token
+  accumulation, and the group cap under disagreeing chunks.
+
 ## [1.0.0] - 2026-10-05
 ### Changed
 - Renamed to **Fold**. The old name promised a choice of models; there is only one now.

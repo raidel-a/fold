@@ -41,6 +41,24 @@ interface NativeResponse {
   isDark?: boolean;
   accentIsFallback?: boolean;
   groupColors?: Record<string, string>;
+  /** Present on the `group` op only: schema-constrained, already decoded. */
+  groups?: RawGroupWire[];
+}
+
+/**
+ * One group as the host decoded it. The native side enforces the shape via a
+ * generation schema, so these need validating but not parsing.
+ */
+export interface RawGroupWire {
+  name?: unknown;
+  color?: unknown;
+  tabIds?: unknown;
+}
+
+export interface GroupingResult {
+  groups: RawGroupWire[];
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /** Sends one framed request to the native host, resolved against its response. */
@@ -158,6 +176,39 @@ export async function completeWithUsage(
     // The host returns real counts from tokenCount(for:); these are the fallback.
     inputTokens: res.inputTokens ?? estimateTokens(inputText),
     outputTokens: res.outputTokens ?? estimateTokens(res.content),
+  };
+}
+
+/**
+ * Asks the host to group tabs under a generation schema.
+ *
+ * The host constrains the model's output to the group shape, so this returns
+ * decoded data rather than prose. That removes the regex-in-a-code-fence parsing
+ * this used to need, and with it the failure mode where one malformed response
+ * aborted the whole fold.
+ */
+export async function groupWithUsage(
+  systemPrompt: string,
+  prompt: string,
+  maxGroups: number,
+  timeoutMs = TIMEOUT_WARM_MS,
+): Promise<GroupingResult> {
+  if (!prompt.trim()) throw new Error('Cannot send an empty prompt to Apple AI');
+
+  const res = await sendNative<NativeResponse>(
+    { id: 'group', op: 'group', systemPrompt, prompt, maxGroups, maxTokens: MAX_TOKENS },
+    timeoutMs,
+  );
+
+  if (!res.ok || !Array.isArray(res.groups)) {
+    throw new Error(res.error ?? 'Apple AI returned no groups');
+  }
+
+  return {
+    groups: res.groups,
+    // Real counts from the host; these are only a fallback if it omitted them.
+    inputTokens: res.inputTokens ?? estimateTokens(systemPrompt + prompt),
+    outputTokens: res.outputTokens ?? estimateTokens(JSON.stringify(res.groups)),
   };
 }
 

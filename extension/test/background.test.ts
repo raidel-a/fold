@@ -75,12 +75,12 @@ const chromeTabs = [
   { id: 5, title: 'New Tab', url: 'chrome://newtab' },
 ];
 
-/** The LLM is the native host now, so stub that instead of fetch. */
-function mockFetchLLM(content: string) {
+/** The model is the native host, and it returns schema-decoded groups. */
+function mockHostGroups(groups: unknown[]) {
   vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
     (_host: string, msg: any, cb: Function) => {
       if (msg?.op === 'status') cb({ ok: true, available: true });
-      else cb({ ok: true, content, inputTokens: 10, outputTokens: 5 });
+      else cb({ ok: true, groups, inputTokens: 10, outputTokens: 5 });
     }
   );
 }
@@ -150,14 +150,14 @@ describe('organize', () => {
   });
 
   it('returns suggestions on success', async () => {
-    mockFetchLLM('[{"name":"Dev","color":"blue","tabIds":[1]},{"name":"Fun","color":"red","tabIds":[2]}]');
+    mockHostGroups([{"name": "Dev", "color": "blue", "tabIds": [1]}, {"name": "Fun", "color": "red", "tabIds": [2]}]);
     const result = await organize();
     expect(result.suggestions).toBeDefined();
     expect(result.suggestions!.length).toBeGreaterThan(0);
   });
 
   it('sets badge text to group count', async () => {
-    mockFetchLLM('[{"name":"Dev","color":"blue","tabIds":[1]}]');
+    mockHostGroups([{"name": "Dev", "color": "blue", "tabIds": [1]}]);
     await organize();
     // 1 LLM group + 1 "Other" group for unassigned tabs
     expect(chrome.action.setBadgeText).toHaveBeenCalledWith({ text: '2' });
@@ -502,7 +502,7 @@ describe('event listeners', () => {
       { id: 1, url: 'https://a.com', groupId: -1 },
       { id: 2, url: 'https://b.com', groupId: -1 },
     ] as any);
-    mockFetchLLM('[]'); // dummy answer
+    mockHostGroups([]); // dummy answer
 
     // Trigger the alarm
     await (chrome.alarms.onAlarm as any).callListeners({ name: 'fold-check' });
@@ -519,7 +519,7 @@ describe('event listeners', () => {
       { id: 1, title: 'A', url: 'https://a.com', groupId: -1 },
       { id: 2, title: 'B', url: 'https://b.com', groupId: -1 },
     ] as any);
-    mockFetchLLM('[{"name":"Auto Group","color":"blue","tabIds":[1,2]}]');
+    mockHostGroups([{"name": "Auto Group", "color": "blue", "tabIds": [1, 2]}]);
 
     await (chrome.alarms.onAlarm as any).callListeners({ name: 'fold-check' });
     await vi.runAllTimersAsync();
@@ -534,7 +534,7 @@ describe('event listeners', () => {
       { id: 1, url: 'https://a.com', groupId: -1 },
       { id: 2, url: 'https://b.com', groupId: -1 },
     ] as any);
-    mockFetchLLM('[]');
+    mockHostGroups([]);
 
     await (chrome.tabs.onCreated as any).callListeners({ id: 1, url: 'https://a.com' });
     await (chrome.tabs.onCreated as any).callListeners({ id: 2, url: 'https://b.com' });
@@ -590,7 +590,7 @@ describe('event listeners', () => {
       { id: 1, title: 'A', url: 'https://a.com', groupId: -1 },
       { id: 2, title: 'B', url: 'https://b.com', groupId: -1 },
     ] as any);
-    mockFetchLLM('[]');
+    mockHostGroups([]);
 
     await (chrome.tabs.onUpdated as any).callListeners(1, { status: 'complete' }, { url: 'https://a.com', windowId: 1, groupId: -1 });
     for (let i = 0; i < 20; i++) await new Promise(r => process.nextTick(r));

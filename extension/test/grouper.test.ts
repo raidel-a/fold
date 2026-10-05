@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  buildPrompt, parseResponse, suggest, truncateTitle, applyDomainRules,
+  buildPrompt, toSuggestions, enforceGroupLimit, suggest, truncateTitle, applyDomainRules,
   findDuplicates, inferTargetGroup, tokenizeTitle, titleGroupSimilarity, matchTabsToExistingGroups,
 } from '../src/grouper';
 import type { TabInfo, AffinityMap, DomainRule, WeightedAffinityMap, RejectionEntry } from '../src/types';
@@ -321,18 +321,16 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('User preferences');
   });
 
-  it('lists all valid colors', () => {
+  it('leaves the response shape to the generation schema', () => {
+    // The prompt used to spell out the JSON format and list the colours. Both are
+    // now the native schema's job, so asserting them here would lock in a
+    // contract that no longer exists.
     const prompt = buildPrompt(tabs, 6, {});
+    expect(prompt).not.toContain('Return ONLY a JSON array');
+    expect(prompt).not.toContain('"tabIds"');
     for (const c of COLORS) {
-      expect(prompt).toContain(c);
+      expect(prompt).not.toContain(c);
     }
-  });
-
-  it('includes JSON format example', () => {
-    const prompt = buildPrompt(tabs, 6, {});
-    expect(prompt).toContain('"name"');
-    expect(prompt).toContain('"color"');
-    expect(prompt).toContain('"tabIds"');
   });
 
   it('truncates long titles according to maxTitleLength', () => {
@@ -365,148 +363,169 @@ describe('buildPrompt', () => {
   });
 });
 
-// ---------- parseResponse ----------
+// ---------- toSuggestions ----------
 
-describe('parseResponse', () => {
-  it('parses valid JSON array', () => {
-    const raw = '[{"name":"Dev","color":"blue","tabIds":[1,2]},{"name":"Media","color":"red","tabIds":[3]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(2);
+describe('toSuggestions', () => {
+  // The host constrains output with a generation schema, so these cases are about
+  // validating against local state the schema cannot know: unknown tab ids,
+  // colours outside the browser palette, and tabs claimed twice.
+
+  it('maps decoded groups onto full tab records', () => {
+    const result = toSuggestions(
+      [{ name: 'Dev', color: 'blue', tabIds: [1, 2] }],
+      tabs,
+    );
+    expect(result).toHaveLength(1);
     expect(result[0].name).toBe('Dev');
     expect(result[0].color).toBe('blue');
-    expect(result[0].tabs).toHaveLength(2);
-    expect(result[0].tabs[0].id).toBe(1);
-  });
-
-  it('enriches tabs with full info', () => {
-    const raw = '[{"name":"Dev","color":"blue","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
+    expect(result[0].tabs.map(t => t.id)).toEqual([1, 2]);
+    // Enriched from the local tab list, not whatever the model echoed back.
     expect(result[0].tabs[0]).toEqual(tabs[0]);
   });
 
-  it('extracts JSON from ```json code blocks', () => {
-    const raw = '```json\n[{"name":"Dev","color":"blue","tabIds":[1,2]}]\n```';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
-  });
-
-  it('extracts JSON from ``` code blocks (no lang)', () => {
-    const raw = 'Here:\n```\n[{"name":"Dev","color":"blue","tabIds":[1]}]\n```\nDone!';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
-  });
-
-  it('extracts JSON embedded in prose', () => {
-    const raw = 'Sure! Here are the groups:\n[{"name":"Dev","color":"blue","tabIds":[1]}]\nHope this helps!';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
-  });
-
-  it('filters out invalid tab IDs', () => {
-    const raw = '[{"name":"Dev","color":"blue","tabIds":[1,999,2]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].tabs).toHaveLength(2);
-    expect(result[0].tabs.map(t => t.id)).toEqual([1, 2]);
-  });
-
-  it('drops groups with no valid tabs', () => {
-    const raw = '[{"name":"Empty","color":"blue","tabIds":[999]},{"name":"Dev","color":"red","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe('Dev');
-  });
-
-  it('defaults invalid color to grey', () => {
-    const raw = '[{"name":"Dev","color":"neon","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].color).toBe('grey');
-  });
-
-  it('defaults missing color to grey', () => {
-    const raw = '[{"name":"Dev","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].color).toBe('grey');
-  });
-
-  it('defaults empty name to Unnamed', () => {
-    const raw = '[{"name":"","color":"blue","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].name).toBe('Unnamed');
-  });
-
-  it('defaults missing name to Unnamed', () => {
-    const raw = '[{"color":"blue","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].name).toBe('Unnamed');
-  });
-
-  it('handles empty tabIds array', () => {
-    const raw = '[{"name":"Empty","color":"blue","tabIds":[]},{"name":"Dev","color":"red","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe('Dev');
-  });
-
-  it('handles missing tabIds field', () => {
-    const raw = '[{"name":"Dev","color":"blue"}]';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(0);
-  });
-
-  it('handles empty JSON array', () => {
-    const raw = '[]';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(0);
-  });
-
-  it('throws on completely unparseable response', () => {
-    expect(() => parseResponse('I cannot help with that.', tabs)).toThrow();
-  });
-
-  it('throws on refusal', () => {
-    expect(() => parseResponse("I'm sorry, I can't assist with that request.", tabs)).toThrow();
-  });
-
-  it('throws on non-array JSON', () => {
-    expect(() => parseResponse('{"name":"Dev"}', tabs)).toThrow('not an array');
-  });
-
-  it('handles number as name (coerces to string)', () => {
-    const raw = '[{"name":42,"color":"blue","tabIds":[1]}]';
-    const result = parseResponse(raw, tabs);
-    expect(result[0].name).toBe('42');
-  });
-
-  it('handles all valid colors', () => {
+  it('keeps every valid colour in the palette', () => {
     for (const color of COLORS) {
-      const raw = `[{"name":"Test","color":"${color}","tabIds":[1]}]`;
-      const result = parseResponse(raw, tabs);
+      const result = toSuggestions([{ name: 'T', color, tabIds: [1] }], tabs);
       expect(result[0].color).toBe(color);
     }
   });
 
-  it('handles duplicate tab IDs in same group', () => {
-    const raw = '[{"name":"Dev","color":"blue","tabIds":[1,1,2]}]';
-    const result = parseResponse(raw, tabs);
-    // All valid IDs kept — dedup is not enforced at this layer
-    expect(result[0].tabs.length).toBeGreaterThanOrEqual(2);
+  it('falls back to grey for a colour outside the palette', () => {
+    const result = toSuggestions([{ name: 'Dev', color: 'neon', tabIds: [1] }], tabs);
+    expect(result[0].color).toBe('grey');
   });
 
-  it('handles response with BOM character', () => {
-    const raw = '\uFEFF[{"name":"Dev","color":"blue","tabIds":[1]}]';
-    // May or may not parse depending on JSON.parse handling
-    try {
-      const result = parseResponse(raw, tabs);
-      expect(result).toHaveLength(1);
-    } catch {
-      // acceptable to throw
+  it('falls back to grey when the colour is missing', () => {
+    const result = toSuggestions([{ name: 'Dev', tabIds: [1] }], tabs);
+    expect(result[0].color).toBe('grey');
+  });
+
+  it('drops tab ids that were never supplied', () => {
+    const result = toSuggestions([{ name: 'Dev', color: 'blue', tabIds: [1, 999, 2] }], tabs);
+    expect(result[0].tabs.map(t => t.id)).toEqual([1, 2]);
+  });
+
+  it('drops a group whose tabs are all unknown', () => {
+    const result = toSuggestions(
+      [{ name: 'Ghost', color: 'blue', tabIds: [999] }, { name: 'Dev', color: 'red', tabIds: [1] }],
+      tabs,
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('Dev');
+  });
+
+  it('gives a tab to only the first group claiming it', () => {
+    const result = toSuggestions(
+      [{ name: 'A', color: 'blue', tabIds: [1] }, { name: 'B', color: 'red', tabIds: [1, 2] }],
+      tabs,
+    );
+    expect(result[0].tabs.map(t => t.id)).toEqual([1]);
+    expect(result[1].tabs.map(t => t.id)).toEqual([2]);
+  });
+
+  it('coerces numeric strings in tabIds', () => {
+    const result = toSuggestions([{ name: 'Dev', color: 'blue', tabIds: ['1', '2'] }], tabs);
+    expect(result[0].tabs.map(t => t.id)).toEqual([1, 2]);
+  });
+
+  it('names an unnamed group rather than showing a blank header', () => {
+    expect(toSuggestions([{ name: '', color: 'blue', tabIds: [1] }], tabs)[0].name).toBe('Unnamed');
+    expect(toSuggestions([{ color: 'blue', tabIds: [1] }], tabs)[0].name).toBe('Unnamed');
+    expect(toSuggestions([{ name: '   ', color: 'blue', tabIds: [1] }], tabs)[0].name).toBe('Unnamed');
+  });
+
+  it('refuses to render a non-string name', () => {
+    // The generation schema declares name as a String, so this cannot happen from
+    // the host. Falling back to a placeholder beats String(42) reaching the UI.
+    expect(toSuggestions([{ name: 42, color: 'blue', tabIds: [1] }], tabs)[0].name).toBe('Unnamed');
+  });
+
+  it('truncates a very long name', () => {
+    const result = toSuggestions([{ name: 'x'.repeat(200), color: 'blue', tabIds: [1] }], tabs);
+    expect(result[0].name.length).toBeLessThanOrEqual(50);
+  });
+
+  it('tolerates a group with no tabIds field at all', () => {
+    expect(toSuggestions([{ name: 'Dev', color: 'blue' }], tabs)).toHaveLength(0);
+  });
+
+  it('tolerates a group whose tabIds is not an array', () => {
+    expect(toSuggestions([{ name: 'Dev', color: 'blue', tabIds: 'nope' }], tabs)).toHaveLength(0);
+  });
+
+  it('returns nothing for an empty group list', () => {
+    expect(toSuggestions([], tabs)).toHaveLength(0);
+  });
+
+  it('stops at the group cap when one is given', () => {
+    const result = toSuggestions(
+      [
+        { name: 'A', color: 'blue', tabIds: [1] },
+        { name: 'B', color: 'red', tabIds: [2] },
+        { name: 'C', color: 'green', tabIds: [3] },
+      ],
+      tabs,
+      2,
+    );
+    expect(result.map(g => g.name)).toEqual(['A', 'B']);
+  });
+});
+
+// ---------- enforceGroupLimit ----------
+
+describe('enforceGroupLimit', () => {
+  const group = (name: string, count: number) => ({
+    name,
+    color: 'blue' as const,
+    tabs: Array.from({ length: count }, (_, i) => ({
+      id: i + 1, title: `${name} ${i}`, url: `https://${name.toLowerCase()}${i}.com`,
+    })),
+  });
+
+  it('leaves a list already within the limit alone', () => {
+    const input = [group('Dev', 3), group('Media', 2)];
+    expect(enforceGroupLimit(input, 6)).toBe(input);
+  });
+
+  it('folds the smallest groups into Other to reach the limit', () => {
+    const result = enforceGroupLimit(
+      [group('Dev', 9), group('Media', 8), group('News', 7), group('Shop', 1)],
+      3,
+    );
+    expect(result).toHaveLength(3);
+    // The largest survive; the smallest is absorbed.
+    expect(result.map(g => g.name).slice(0, 2)).toEqual(['Dev', 'Media']);
+    expect(result[2].name).toBe('Other');
+  });
+
+  it('loses no tabs when folding', () => {
+    const input = [group('A', 5), group('B', 4), group('C', 3), group('D', 2)];
+    const before = input.flatMap(g => g.tabs.map(t => t.id)).length;
+    const after = enforceGroupLimit(input, 2).flatMap(g => g.tabs).length;
+    expect(after).toBe(before);
+  });
+
+  it('never exceeds the limit', () => {
+    const input = Array.from({ length: 12 }, (_, i) => group(`G${i}`, 10 - i));
+    for (const limit of [1, 2, 3, 6, 11]) {
+      expect(enforceGroupLimit(input, limit).length).toBeLessThanOrEqual(limit);
     }
   });
 
-  it('handles deeply nested code block', () => {
-    const raw = 'text\n```json\n[{"name":"Dev","color":"blue","tabIds":[1]}]\n```\nmore text\n```\nignored\n```';
-    const result = parseResponse(raw, tabs);
-    expect(result).toHaveLength(1);
+  it('does not collide with an existing Other group', () => {
+    const result = enforceGroupLimit(
+      [group('Dev', 9), group('Media', 8), group('Other', 1)],
+      2,
+    );
+    const names = result.map(g => g.name.toLowerCase());
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('does not mutate its input', () => {
+    const input = [group('A', 3), group('B', 2)];
+    const snapshot = JSON.stringify(input);
+    enforceGroupLimit(input, 1);
+    expect(JSON.stringify(input)).toBe(snapshot);
   });
 });
 
@@ -517,17 +536,17 @@ describe('suggest', () => {
     vi.mocked((chrome.runtime as any).sendNativeMessage).mockReset().mockImplementation(
       (_host: string, msg: any, cb: Function) => {
         if (msg?.op === 'status') cb({ ok: true, available: true });
-        else cb({ ok: true, content: '[]', inputTokens: 0, outputTokens: 0 });
+        else cb({ ok: true, groups: [], inputTokens: 0, outputTokens: 0 });
       }
     );
   });
 
-  /** The native host is the only LLM transport; stub its reply. */
-  function mockLLM(content: string) {
+  /** The native host is the only model transport; stub its decoded reply. */
+  function mockLLM(groups: unknown[]) {
     vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
       (_host: string, msg: any, cb: Function) => {
         if (msg?.op === 'status') cb({ ok: true, available: true });
-        else cb({ ok: true, content, inputTokens: 10, outputTokens: 5 });
+        else cb({ ok: true, groups, inputTokens: 10, outputTokens: 5 });
       }
     );
   }
@@ -538,7 +557,7 @@ describe('suggest', () => {
   }
 
   it('returns enriched suggestions from LLM', async () => {
-    mockLLM('[{"name":"Dev","color":"blue","tabIds":[1,2]},{"name":"Media","color":"red","tabIds":[3]}]');
+    mockLLM([{"name": "Dev", "color": "blue", "tabIds": [1, 2]}, {"name": "Media", "color": "red", "tabIds": [3]}]);
     const { suggestions: result } = await suggest(tabs, TEST_SETTINGS, {});
     expect(result).toHaveLength(3); // 2 LLM groups + "Other" for unassigned tab 4
     expect(result[0].tabs[0].title).toBe('GitHub - repo');
@@ -546,13 +565,13 @@ describe('suggest', () => {
   });
 
   it('passes affinity to prompt', async () => {
-    mockLLM('[{"name":"Dev","color":"blue","tabIds":[1]}]');
+    mockLLM([{"name": "Dev", "color": "blue", "tabIds": [1]}]);
     await suggest(tabs, TEST_SETTINGS, { 'github.com': 'Code' });
     expect(lastPrompt().prompt).toContain('Code');
   });
 
   it('applies domain rules before LLM call', async () => {
-    mockLLM('[{"name":"Other","color":"green","tabIds":[2,4]}]');
+    mockLLM([{"name": "Other", "color": "green", "tabIds": [2, 4]}]);
     const rules: DomainRule[] = [
       { domain: 'github.com', groupName: 'Dev', color: 'blue' },
       { domain: 'youtube.com', groupName: 'Media', color: 'red' },
@@ -565,7 +584,7 @@ describe('suggest', () => {
   });
 
   it('applies wildcard domain rules before LLM call', async () => {
-    mockLLM('[{"name":"Other","color":"green","tabIds":[2]}]');
+    mockLLM([{"name": "Other", "color": "green", "tabIds": [2]}]);
     const awsTabs: TabInfo[] = [
       {
         id: 30,
@@ -599,7 +618,7 @@ describe('suggest', () => {
   });
 
   it('reduces maxGroups for LLM based on rule matches', async () => {
-    mockLLM('[{"name":"Other","color":"green","tabIds":[2,4]}]');
+    mockLLM([{"name": "Other", "color": "green", "tabIds": [2, 4]}]);
     const rules: DomainRule[] = [{ domain: 'github.com', groupName: 'Dev', color: 'blue' }];
     await suggest(tabs, { ...TEST_SETTINGS, maxGroups: 4 }, {}, rules);
     expect(lastPrompt().prompt).toContain('at most 3');
@@ -618,10 +637,106 @@ describe('suggest', () => {
     expect(caught!.message).toContain('timed out');
   });
 
-  it('uses system message for LLM', async () => {
-    mockLLM('[{"name":"Dev","color":"blue","tabIds":[1]}]');
+  it('uses system message for the model', async () => {
+    mockLLM([{"name": "Dev", "color": "blue", "tabIds": [1]}]);
     await suggest(tabs, TEST_SETTINGS, {});
     expect(lastPrompt().systemPrompt).toContain('tab organizer');
+  });
+
+  // ---------- chunking ----------
+
+  describe('more tabs than one chunk holds', () => {
+    /** CHUNK_SIZE is 60, so this is two chunks plus a remainder. */
+    const manyTabs: TabInfo[] = Array.from({ length: 130 }, (_, i) => ({
+      id: i + 1,
+      title: `Tab ${i + 1}`,
+      url: `https://site${i + 1}.example.com`,
+    }));
+
+    /** Replies with one group per call, named after the first tab in that chunk. */
+    function mockChunked() {
+      let call = 0;
+      vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
+        (_host: string, msg: any, cb: Function) => {
+          if (msg?.op === 'status') return cb({ ok: true, available: true });
+          const ids = manyTabs
+            .filter(t => msg.prompt.includes(`id: ${t.id} |`))
+            .map(t => t.id);
+          call++;
+          cb({
+            ok: true,
+            groups: [{ name: `Chunk${call}`, color: 'blue', tabIds: ids }],
+            inputTokens: 100,
+            outputTokens: 20,
+          });
+        }
+      );
+    }
+
+    function chunkSizes(): number[] {
+      return vi.mocked((chrome.runtime as any).sendNativeMessage).mock.calls
+        .filter(c => c[1]?.op === 'group')
+        .map(c => (c[1].prompt.match(/id: \d+ \|/g) || []).length);
+    }
+
+    it('splits into chunks of at most 60', async () => {
+      mockChunked();
+      await suggest(manyTabs, { ...TEST_SETTINGS, maxGroups: 6 }, {});
+      expect(chunkSizes()).toEqual([60, 60, 10]);
+    });
+
+    it('makes one host call per chunk', async () => {
+      mockChunked();
+      await suggest(manyTabs, TEST_SETTINGS, {});
+      const groupCalls = vi.mocked((chrome.runtime as any).sendNativeMessage).mock.calls
+        .filter(c => c[1]?.op === 'group');
+      expect(groupCalls).toHaveLength(3);
+    });
+
+    it('assigns every tab exactly once across chunks', async () => {
+      mockChunked();
+      const { suggestions } = await suggest(manyTabs, TEST_SETTINGS, {});
+      const ids = suggestions.flatMap(g => g.tabs.map(t => t.id));
+      expect(new Set(ids).size).toBe(manyTabs.length);
+    });
+
+    it('accumulates token usage across chunks', async () => {
+      mockChunked();
+      const { inputTokens, outputTokens } = await suggest(manyTabs, TEST_SETTINGS, {});
+      expect(inputTokens).toBe(300);
+      expect(outputTokens).toBe(60);
+    });
+
+    it('honours the group limit even when chunks disagree', async () => {
+      // Chunks are grouped independently, so each invents its own names. Merging
+      // on name alone used to yield one group per chunk, past the user's cap.
+      let call = 0;
+      vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
+        (_host: string, msg: any, cb: Function) => {
+          if (msg?.op === 'status') return cb({ ok: true, available: true });
+          const ids = manyTabs.filter(t => msg.prompt.includes(`id: ${t.id} |`)).map(t => t.id);
+          call++;
+          cb({
+            ok: true,
+            groups: [
+              { name: `Ideas${call}`, color: 'blue', tabIds: ids },
+              { name: `Extra${call}`, color: 'red', tabIds: ids.slice(0, 5) },
+            ],
+            inputTokens: 10, outputTokens: 5,
+          });
+        }
+      );
+
+      const { suggestions } = await suggest(manyTabs, { ...TEST_SETTINGS, maxGroups: 4 }, {});
+      // Four groups or fewer: the limit is the user's, not the model's.
+      expect(suggestions.length).toBeLessThanOrEqual(4);
+    });
+
+    it('does not fold when the tab count fits one chunk', async () => {
+      mockChunked();
+      await suggest(manyTabs.slice(0, 60), TEST_SETTINGS, {});
+      expect(chunkSizes()).toEqual([60]);
+    });
   });
 });
 

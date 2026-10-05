@@ -80,7 +80,11 @@ enum AppleModel {
         }
     }
 
-    static func complete(systemPrompt: String, prompt: String, maxTokens: Int) async throws -> (String, Int, Int) {
+    /// Shared prologue: refuse early if the model cannot run, and trim the inputs
+    /// so a pathological prompt cannot blow past the context window.
+    private static func prepare(
+        systemPrompt: String, prompt: String
+    ) throws -> (model: SystemLanguageModel, system: String, prompt: String) {
         let model = SystemLanguageModel.default
         switch model.availability {
         case .available:
@@ -88,29 +92,155 @@ enum AppleModel {
         case .unavailable(let reason):
             throw HostError.unavailable(explain(reason))
         }
+        return (
+            model,
+            String(systemPrompt.prefix(20_000)),
+            String(prompt.prefix(60_000))
+        )
+    }
 
-        let trimmedSystem = String(systemPrompt.prefix(20_000))
-        let trimmedPrompt = String(prompt.prefix(60_000))
-        let session = LanguageModelSession(instructions: trimmedSystem.isEmpty ? nil : trimmedSystem)
+    /// Real token counts, so the extension never has to estimate with chars/4.
+    private static func tokenCost(
+        model: SystemLanguageModel, system: String, prompt: String, output: String
+    ) async -> (input: Int, output: Int) {
+        let promptTokens = (try? await model.tokenCount(for: prompt)) ?? 0
+        let systemTokens = system.isEmpty
+            ? 0
+            : ((try? await model.tokenCount(for: Instructions(system))) ?? 0)
+        let outputTokens = (try? await model.tokenCount(for: output)) ?? 0
+        return (promptTokens + systemTokens, outputTokens)
+    }
+
+    static func complete(systemPrompt: String, prompt: String, maxTokens: Int) async throws -> (String, Int, Int) {
+        let (model, system, prompt) = try prepare(systemPrompt: systemPrompt, prompt: prompt)
+        let session = LanguageModelSession(instructions: system.isEmpty ? nil : system)
 
         let content: String
         do {
             content = try await session.respond(
-                to: trimmedPrompt,
+                to: prompt,
                 options: GenerationOptions(maximumResponseTokens: max(256, maxTokens))
             ).content
         } catch {
             throw HostError.generation(error.localizedDescription)
         }
 
-        // Foundation Models exposes real token counts, so skip Fold's char/4 estimate.
-        let promptTokens = (try? await model.tokenCount(for: trimmedPrompt)) ?? 0
-        let systemTokens = trimmedSystem.isEmpty
-            ? 0
-            : ((try? await model.tokenCount(for: Instructions(trimmedSystem))) ?? 0)
-        let outputTokens = (try? await model.tokenCount(for: content)) ?? 0
+        let usage = await tokenCost(model: model, system: system, prompt: prompt, output: content)
+        return (content, usage.input, usage.output)
+    }
 
-        return (content, promptTokens + systemTokens, outputTokens)
+    /// Groups tabs under a generation schema rather than by asking for JSON in
+    /// prose.
+    ///
+    /// The previous approach spelled the format out in the prompt and then dug
+    /// the result out of a code fence with a regex. Schema-constrained generation
+    /// removes that whole class of failure: the model cannot emit a tab id that
+    /// was not supplied, cannot forget the wrapper, and cannot wrap it in prose,
+    /// so the extension receives a decoded object instead of text to parse.
+    static func group(
+        systemPrompt: String, prompt: String, maxGroups: Int, maxTokens: Int
+    ) async throws -> ([[String: Any]], Int, Int) {
+        let (model, system, prompt) = try prepare(systemPrompt: systemPrompt, prompt: prompt)
+        let session = LanguageModelSession(instructions: system.isEmpty ? nil : system)
+
+        let plan: TabGroupPlan
+        do {
+            let response = try await session.respond(
+                to: prompt,
+                schema: TabGroupPlan.generationSchema,
+                options: GenerationOptions(maximumResponseTokens: max(256, maxTokens))
+            )
+            plan = try TabGroupPlan(response.content)
+        } catch let error as HostError {
+            throw error
+        } catch {
+            throw HostError.generation(error.localizedDescription)
+        }
+
+        // The schema permits more groups than requested, so enforce the cap here
+        // rather than trusting the prompt instruction.
+        var groups = plan.groups
+        if groups.count > maxGroups {
+            groups = Array(groups.prefix(maxGroups))
+        }
+
+        let wire: [[String: Any]] = groups.map { group in
+            [
+                "name": String(group.name.prefix(50)),
+                "color": group.color,
+                "tabIds": group.tabIds,
+            ]
+        }
+
+        let usage = await tokenCost(model: model, system: system, prompt: prompt, output: plan.json)
+        return (wire, usage.input, usage.output)
+    }
+}
+
+// MARK: - Generation schema
+
+/// The shape the model must fill in. Kept here rather than described in the
+/// prompt so the constraint is enforced by the sampler.
+@Generable(description: "A partition of the supplied tabs into groups.")
+struct TabGroupPlan {
+    @Guide(description: "Every group, together covering each supplied tab id exactly once.")
+    var groups: [TabGroup]
+}
+
+@Generable(description: "One proposed tab group.")
+struct TabGroup {
+    @Guide(description: "Short group name, 1 to 3 words.")
+    var name: String
+
+    // Modelled as a String, not an enum: an enum gains no Generable conformance
+    // for free, and the extension validates against its own palette anyway.
+    @Guide(
+        description: """
+            Tab group colour. Exactly one of: grey, blue, red, yellow, green, \
+            pink, purple, cyan, orange.
+            """
+    )
+    var color: String
+
+    @Guide(description: "The ids of the tabs in this group, copied exactly from the input.")
+    var tabIds: [Int]
+}
+
+private extension TabGroupPlan {
+    /// Re-encoded for token accounting, since Foundation Models counts against
+    /// text rather than against the decoded value.
+    var json: String {
+        let groups = self.groups.map { group in
+            """
+            {"name":\(group.name.jsonLiteral),"color":\(group.color.jsonLiteral),\
+            "tabIds":[\(group.tabIds.map(String.init).joined(separator: ","))]}
+            """
+        }
+        return "{\"groups\":[\(groups.joined(separator: ","))]}"
+    }
+}
+
+private extension String {
+    /// Minimal JSON string escaping for the token-count text above. This is a
+    /// faithful echo of what the sampler produced, not a second source of truth.
+    var jsonLiteral: String {
+        var out = "\""
+        for scalar in unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if scalar.value < 0x20 {
+                    out += String(format: "\\u%04x", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return out + "\""
     }
 }
 
@@ -241,6 +371,27 @@ func handle(_ message: [String: Any]) async {
     }
 
     do {
+        // Schema-constrained grouping is the path the extension uses for tab
+        // folding. Plain completion stays available for the connectivity test and
+        // anything that wants prose back.
+        if message["op"] as? String == "group" {
+            let maxGroups = message["maxGroups"] as? Int ?? 6
+            let (groups, inputTokens, outputTokens) = try await AppleModel.group(
+                systemPrompt: systemPrompt,
+                prompt: prompt,
+                maxGroups: maxGroups,
+                maxTokens: maxTokens
+            )
+            Wire.write([
+                "id": id,
+                "ok": true,
+                "groups": groups,
+                "inputTokens": inputTokens,
+                "outputTokens": outputTokens,
+            ])
+            return
+        }
+
         let (content, inputTokens, outputTokens) = try await AppleModel.complete(
             systemPrompt: systemPrompt, prompt: prompt, maxTokens: maxTokens
         )

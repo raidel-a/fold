@@ -78,7 +78,12 @@ describe('E2E Integration: Message dispatch → Background → Storage', () => {
     vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
       (_host: string, msg: any, cb: Function) => {
         if (msg?.op === 'status') cb({ ok: true, available: true });
-        else cb({ ok: true, content: '[{"name":"Dev","tabIds":[1,2]}]', inputTokens: 500, outputTokens: 200 });
+        else cb({
+          ok: true,
+          groups: [{ name: 'Dev', color: 'blue', tabIds: [1, 2] }],
+          inputTokens: 500,
+          outputTokens: 200,
+        });
       }
     );
 
@@ -98,10 +103,23 @@ describe('E2E Integration: Message dispatch → Background → Storage', () => {
       { id: 1, url: 'https://github.com', title: 'GH', groupId: -1 },
       { id: 2, url: 'https://youtube.com', title: 'YT', groupId: -1 },
     ] as any);
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: '[{"name":"Dev","tabIds":[1]},{"name":"Fun","tabIds":[2]}]' } }],
-      usage: { prompt_tokens: 100, completion_tokens: 50 },
-    }), { status: 200 }));
+    // This test previously stubbed `fetch` with an OpenAI-shaped response, which
+    // was already dead code: Fold has no HTTP path. The native host is the only
+    // transport, so stub it with schema-decoded groups.
+    vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
+      (_host: string, msg: any, cb: Function) => {
+        if (msg?.op === 'status') return cb({ ok: true, available: true });
+        cb({
+          ok: true,
+          groups: [
+            { name: 'Dev', color: 'blue', tabIds: [1] },
+            { name: 'Fun', color: 'red', tabIds: [2] },
+          ],
+          inputTokens: 100,
+          outputTokens: 50,
+        });
+      }
+    );
 
     const organizeRes = await sendMsg({ type: 'organize' });
     expect(organizeRes.suggestions).toBeDefined();

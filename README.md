@@ -65,9 +65,14 @@ Two Chromium constraints shaped the design, both found by probing Helium:
 ## Performance
 
 Cold start is ~8s for the first inference (the model loads into memory), ~2s after.
-`completeWithUsage` budgets 120s for the first call and 60s for warm ones. The grouper
+`groupWithUsage` budgets 120s for the first call and 60s for warm ones. The grouper
 chunks at 60 tabs, so a large window pays that cold cost once per chunk if the host
 process is restarted between them — it is not, so only the first chunk is slow.
+
+Grouping uses a Foundation Models `GenerationSchema` rather than asking for JSON in
+prose. The host returns decoded groups, so the extension never parses model output,
+and the format rules left the prompt: a six-tab fold costs 302 input tokens rather
+than 367.
 
 ## Interface
 

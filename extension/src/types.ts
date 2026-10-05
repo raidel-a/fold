@@ -13,11 +13,7 @@ export interface TabInfo {
   url: string;
 }
 
-export interface RawGroup {
-  name: string;
-  color: Color;
-  tabIds: number[];
-}
+
 
 export interface GroupSuggestion {
   name: string;

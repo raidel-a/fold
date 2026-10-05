@@ -1,6 +1,7 @@
-import { completeWithUsage } from './llm';
+import { groupWithUsage, coldStartTimeout } from './llm';
+import type { RawGroupWire } from './llm';
 import type {
-  TabInfo, RawGroup, GroupSuggestion, Settings, AffinityMap, DomainRule, Color,
+  TabInfo, GroupSuggestion, Settings, AffinityMap, DomainRule, Color,
   WeightedAffinityMap, RejectionEntry,
 } from './types';
 import { COLORS } from './types';
@@ -187,16 +188,12 @@ export function buildPrompt(
     extraHints?.openers || '',
   ].filter(Boolean).join('');
 
+  // The response shape is enforced by a generation schema on the native side, so
+  // the prompt carries intent only. Asking for JSON here as well would spend the
+  // model's attention on syntax it no longer has to get right by hand.
   return `Group these browser tabs into at most ${maxGroups} logical groups.
-Return ONLY a JSON array, no other text.
 
-Rules:
-- Every tab must appear in exactly one group
-- Use short group names (1-3 words)
-- Valid colors: ${COLORS.join(', ')}
-- Use tabIds from the list below exactly as given
-
-Format: [{"name":"Group","color":"blue","tabIds":[1,2]}]
+Every tab belongs in exactly one group. Use short group names, one to three words.
 ${hints}${historyHint}${extra}
 Tabs:
 ${tabList}`;
@@ -256,56 +253,44 @@ export function matchTabsToExistingGroups(
   return { matched, remaining };
 }
 
-function extractJSON(raw: string): string {
-  // Try code block first
-  const codeBlock = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (codeBlock) return codeBlock[1].trim();
-
-  // Try raw array
-  const arrayMatch = raw.match(/\[[\s\S]*\]/);
-  if (arrayMatch) return arrayMatch[0];
-
-  return raw;
-}
-
-function validateGroup(g: unknown): g is RawGroup {
-  if (typeof g !== 'object' || g === null) return false;
-  const obj = g as Record<string, unknown>;
-  if (!Array.isArray(obj.tabIds)) return false;
-  return true;
-}
-
-export function parseResponse(raw: string, tabs: TabInfo[]): GroupSuggestion[] {
+/**
+ * Turns the host's schema-constrained groups into suggestions.
+ *
+ * The generation schema on the native side means the shape is already correct:
+ * no JSON parsing, no code-fence extraction, no retry-on-garbage. What remains is
+ * validating against *our* state, which the schema cannot know: a tab id may have
+ * been hallucinated despite the constraint, a colour may be outside the browser's
+ * palette, and a tab may be claimed by two groups.
+ */
+export function toSuggestions(
+  groups: RawGroupWire[],
+  tabs: TabInfo[],
+  maxGroups?: number,
+): GroupSuggestion[] {
   const validIds = new Set(tabs.map(t => t.id));
   const tabMap = new Map(tabs.map(t => [t.id, t]));
+  const assignedIds = new Set<number>();
+  const suggestions: GroupSuggestion[] = [];
 
-  const json = extractJSON(raw);
+  for (const g of groups) {
+    if (maxGroups !== undefined && suggestions.length >= maxGroups) break;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch (err) {
-    throw new Error(`Failed to parse LLM response as JSON. Length: ${raw.length}, Error: ${err}`);
+    const name = typeof g.name === 'string' && g.name.trim()
+      ? g.name.trim().slice(0, 50)
+      : 'Unnamed';
+    const color = (COLORS.includes(g.color as Color) ? g.color : 'grey') as Color;
+
+    const ids = (Array.isArray(g.tabIds) ? g.tabIds : [])
+      .map((id: unknown) => typeof id === 'number' ? id : Number(id))
+      .filter((id: number) => !isNaN(id) && validIds.has(id) && !assignedIds.has(id));
+
+    for (const id of ids) assignedIds.add(id);
+
+    const groupTabs = ids.map((id: number) => tabMap.get(id)!);
+    if (groupTabs.length > 0) suggestions.push({ name, color, tabs: groupTabs });
   }
 
-  if (!Array.isArray(parsed)) throw new Error('Response is not an array');
-
-  const assignedIds = new Set<number>();
-
-  const groups = parsed
-    .filter(validateGroup)
-    .map(g => {
-      const name = String(g.name || 'Unnamed').slice(0, 50);
-      const color = (COLORS.includes(g.color as Color) ? g.color : 'grey') as Color;
-      const tabIds = g.tabIds
-        .map((id: unknown) => typeof id === 'number' ? id : Number(id))
-        .filter((id: number) => !isNaN(id) && validIds.has(id) && !assignedIds.has(id));
-      for (const id of tabIds) assignedIds.add(id);
-      return { name, color, tabs: tabIds.map((id: number) => tabMap.get(id)!) };
-    })
-    .filter(g => g.tabs.length > 0);
-
-  return groups;
+  return suggestions;
 }
 
 /** Collect any tabs the LLM forgot into an "Other" group */
@@ -368,21 +353,52 @@ export async function suggest(
 
   for (const chunk of chunks) {
     const prompt = buildPrompt(chunk, remainingGroups, affinity, settings.maxTitleLength, historyHint, extraHints);
-    const result = await completeWithUsage([
-      { role: 'system', content: 'You are a browser tab organizer. Return only valid JSON.' },
-      { role: 'user', content: prompt },
-    ]);
-    chunkResults.push(parseResponse(result.content, chunk));
+    const result = await groupWithUsage(
+      'You are a browser tab organizer. Group tabs by topic.',
+      prompt,
+      // A later chunk must not claim more groups than the whole fold is allowed,
+      // or the merge below can exceed the user's setting.
+      remainingGroups,
+      chunks.length > 1 ? coldStartTimeout() : undefined,
+    );
+    chunkResults.push(toSuggestions(result.groups, chunk, remainingGroups));
     totalInput += result.inputTokens;
     totalOutput += result.outputTokens;
   }
 
   const merged = chunks.length > 1 ? mergeSuggestions(chunkResults) : chunkResults[0];
-  const llmSuggestions = collectUnassigned(merged, remaining);
+
+  // Chunks are grouped independently, so merging on name alone can produce more
+  // groups than the user asked for. Fold the smallest back into "Other" until the
+  // cap holds, rather than silently handing back 12 groups for a limit of 6.
+  const capped = enforceGroupLimit(merged, settings.maxGroups);
+  const llmSuggestions = collectUnassigned(capped, remaining);
 
   return {
     suggestions: [...matched, ...llmSuggestions],
     inputTokens: totalInput,
     outputTokens: totalOutput,
   };
+}
+
+/**
+ * Reduces a suggestion list to at most `maxGroups` by folding the smallest groups
+ * into a trailing "Other", preserving the largest and most deliberate ones.
+ */
+export function enforceGroupLimit(
+  suggestions: GroupSuggestion[],
+  maxGroups: number,
+): GroupSuggestion[] {
+  if (suggestions.length <= maxGroups) return suggestions;
+  if (maxGroups < 1) return suggestions.slice(0, 1);
+
+  const ranked = [...suggestions].sort((a, b) => b.tabs.length - a.tabs.length);
+  const keep = ranked.slice(0, maxGroups - 1);
+  const overflow = ranked.slice(maxGroups - 1);
+
+  const overflowTabs = overflow.flatMap(g => g.tabs);
+  if (overflowTabs.length === 0) return keep;
+
+  const otherName = suggestions.some(g => g.name.toLowerCase() === 'other') ? 'Other 2' : 'Other';
+  return [...keep, { name: otherName, color: 'grey' as Color, tabs: overflowTabs }];
 }
