@@ -303,7 +303,17 @@ export function collectUnassigned(groups: GroupSuggestion[], allTabs: TabInfo[])
   return groups;
 }
 
-const CHUNK_SIZE = 60;
+/**
+ * Tabs per chunk. Measured against the model's 4096-token context, not guessed:
+ * at the 80-character default title length a 40-tab chunk is ~3277 prompt tokens
+ * and fails outright, while 30 sits just inside the ceiling. 20 leaves headroom
+ * for the 200-character setting, long URLs, and the affinity hints, which all
+ * add to the same budget.
+ *
+ * See scripts/ProbeContext.swift to re-measure after raising
+ * `maxTitleLength` or the context window.
+ */
+const CHUNK_SIZE = 20;
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = [];

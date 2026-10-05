@@ -29,8 +29,20 @@
   screenshots it mid-fold, for both bar states.
 
 ### Fixed
+- **`CHUNK_SIZE` reduced from 60 to 20.** The old value was a round number, not a
+  measured one, and it exceeded the model's context window. A 60-tab chunk needs
+  ~4975 prompt tokens at the default 80-character title length and ~8575 at the
+  200-character setting, against a 4096-token limit — so any window with more than
+  ~35 tabs failed outright with "the session's transcript exceeded the model's
+  context size", and the whole fold errored. Measured ceiling is 20 tabs at the
+  worst-case title length. `scripts/ProbeContext.swift` reproduces the measurement.
 - The empty state no longer claims "Nothing folded yet" while a fold is running.
 - A failed progress broadcast can no longer abort the fold it was reporting on.
+
+### Measured, not changed
+- Reusing one `LanguageModelSession` across chunks instead of building one per
+  request is within noise: +2% and -6% median across two runs, with overlapping
+  ranges. Left as is. `scripts/BenchmarkSession.swift` reproduces it.
 
 ## [1.0.0] - 2026-10-05
 ### Changed

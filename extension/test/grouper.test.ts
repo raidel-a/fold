@@ -646,7 +646,7 @@ describe('suggest', () => {
   // ---------- chunking ----------
 
   describe('more tabs than one chunk holds', () => {
-    /** CHUNK_SIZE is 60, so this is two chunks plus a remainder. */
+    /** CHUNK_SIZE is 20, so this is six full chunks plus a remainder. */
     const manyTabs: TabInfo[] = Array.from({ length: 130 }, (_, i) => ({
       id: i + 1,
       title: `Tab ${i + 1}`,
@@ -682,7 +682,7 @@ describe('suggest', () => {
     it('splits into chunks of at most 60', async () => {
       mockChunked();
       await suggest(manyTabs, { ...TEST_SETTINGS, maxGroups: 6 }, {});
-      expect(chunkSizes()).toEqual([60, 60, 10]);
+      expect(chunkSizes()).toEqual([20, 20, 20, 20, 20, 20, 10]);
     });
 
     it('makes one host call per chunk', async () => {
@@ -690,7 +690,7 @@ describe('suggest', () => {
       await suggest(manyTabs, TEST_SETTINGS, {});
       const groupCalls = vi.mocked((chrome.runtime as any).sendNativeMessage).mock.calls
         .filter(c => c[1]?.op === 'group');
-      expect(groupCalls).toHaveLength(3);
+      expect(groupCalls).toHaveLength(7);
     });
 
     it('assigns every tab exactly once across chunks', async () => {
@@ -703,8 +703,8 @@ describe('suggest', () => {
     it('accumulates token usage across chunks', async () => {
       mockChunked();
       const { inputTokens, outputTokens } = await suggest(manyTabs, TEST_SETTINGS, {});
-      expect(inputTokens).toBe(300);
-      expect(outputTokens).toBe(60);
+      expect(inputTokens).toBe(700);
+      expect(outputTokens).toBe(140);
     });
 
     it('honours the group limit even when chunks disagree', async () => {
@@ -734,8 +734,8 @@ describe('suggest', () => {
 
     it('does not fold when the tab count fits one chunk', async () => {
       mockChunked();
-      await suggest(manyTabs.slice(0, 60), TEST_SETTINGS, {});
-      expect(chunkSizes()).toEqual([60]);
+      await suggest(manyTabs.slice(0, 20), TEST_SETTINGS, {});
+      expect(chunkSizes()).toEqual([20]);
     });
   });
 });

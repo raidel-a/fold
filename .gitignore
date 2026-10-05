@@ -4,4 +4,8 @@ extension/dist/
 native/fold-appleai-host
 shots/
 *.log
+
+# Compiled from the .swift sources beside them, which are tracked.
 scripts/make-icons
+scripts/benchmark-session
+scripts/probe-context

@@ -64,10 +64,24 @@ Two Chromium constraints shaped the design, both found by probing Helium:
 
 ## Performance
 
-Cold start is ~8s for the first inference (the model loads into memory), ~2s after.
-`groupWithUsage` budgets 120s for the first call and 60s for warm ones. The grouper
-chunks at 60 tabs, so a large window pays that cold cost once per chunk if the host
-process is restarted between them — it is not, so only the first chunk is slow.
+Cold start is ~8s for the first inference, ~2s after. `groupWithUsage` budgets 120s
+for the first call and 60s for warm ones.
+
+The grouper chunks at **20 tabs**, which is measured rather than chosen: the model's
+context window is 4096 tokens, and a chunk of 60 tabs needs ~4975 prompt tokens at
+the default title length, ~8575 at the 200-character setting. It used to chunk at 60
+and fail outright on any window above roughly 35 tabs. Re-measure with:
+
+```bash
+swiftc -O scripts/ProbeContext.swift -o scripts/probe-context && ./scripts/probe-context
+```
+
+Reusing one `LanguageModelSession` across chunks was benchmarked and is within noise
+(+2% and -6% median across two runs), so each request gets its own:
+
+```bash
+swiftc -O scripts/BenchmarkSession.swift -o scripts/benchmark-session && ./scripts/benchmark-session
+```
 
 Grouping uses a Foundation Models `GenerationSchema` rather than asking for JSON in
 prose. The host returns decoded groups, so the extension never parses model output,
