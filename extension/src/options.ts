@@ -515,7 +515,9 @@ const autoSaveElements = [
 ];
 for (const el of autoSaveElements) {
   el.addEventListener('change', () => { void save(); });
-  if (el instanceof HTMLInputElement && (el.type === 'text' || el.type === 'password' || el.type === 'number' || el.type === 'range')) {
+  // Sliders fire `input` on every drag step, so save as they move; checkboxes
+  // and selects already fire `change` the moment they are touched.
+  if (el instanceof HTMLInputElement && el.type === 'range') {
     el.addEventListener('input', () => scheduleSave());
   }
 }
