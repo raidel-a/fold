@@ -16,6 +16,7 @@ import type {
   RejectionEntry,
   Color,
   SnoozedTab,
+  DriftReport,
 } from './types';
 import { DEFAULT_SETTINGS, DEFAULT_STATS, DEFAULT_USAGE } from './types';
 
@@ -36,6 +37,7 @@ const K = {
   coOccurrence: 'coOccurrence',
   groupColorPrefs: 'groupColorPrefs',
   snoozedTabs: 'snoozedTabs',
+  lastDrift: 'lastDrift',
 } as const;
 
 const MAX_HISTORY = 50;
@@ -76,6 +78,7 @@ function sanitizeSettings(input: Partial<Settings>): Settings {
     silentAutoAdd: Boolean(s.silentAutoAdd),
     autoPinApps: Boolean(s.autoPinApps),
     staleTabThresholdHours: clampNumber(s.staleTabThresholdHours, DEFAULT_SETTINGS.staleTabThresholdHours, 1, 24 * 30),
+    enableStalePurge: Boolean(s.enableStalePurge),
     enableCorrectionTracking: Boolean(s.enableCorrectionTracking),
     enableRejectionMemory: Boolean(s.enableRejectionMemory),
     enableGroupDrift: Boolean(s.enableGroupDrift),
@@ -271,6 +274,30 @@ export async function getSuggestions(): Promise<GroupSuggestion[] | null> {
 
 export async function saveSuggestions(suggestions: GroupSuggestion[] | null): Promise<void> {
   await chrome.storage.local.set({ [K.suggestions]: suggestions });
+}
+
+// --- Last drift sweep (local) ---
+
+const NO_DRIFT: DriftReport = { driftedGroups: [], checkedAt: null };
+
+/**
+ * Returns the last sweep's result. Tolerates a malformed or absent record so a
+ * bad write can never stop the popup or the settings page from rendering.
+ */
+export async function getLastDrift(): Promise<DriftReport> {
+  const data = await chrome.storage.local.get({ [K.lastDrift]: NO_DRIFT });
+  const raw = data[K.lastDrift] as Partial<DriftReport> | null;
+  if (!raw || !Array.isArray(raw.driftedGroups)) return NO_DRIFT;
+  return {
+    driftedGroups: raw.driftedGroups.filter(g => typeof g === 'string'),
+    checkedAt: typeof raw.checkedAt === 'number' ? raw.checkedAt : null,
+  };
+}
+
+export async function saveLastDrift(driftedGroups: string[]): Promise<void> {
+  await chrome.storage.local.set({
+    [K.lastDrift]: { driftedGroups, checkedAt: Date.now() },
+  });
 }
 
 // --- Domain Rules (sync) ---

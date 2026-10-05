@@ -36,6 +36,11 @@ export interface Settings {
   silentAutoAdd: boolean;
   autoPinApps: boolean;
   staleTabThresholdHours: number;
+  /**
+   * Gates the daily stale-tab sweep only. Purging on demand from the settings
+   * page ignores this, since that is the user asking directly.
+   */
+  enableStalePurge: boolean;
   // Smart learning
   enableCorrectionTracking: boolean;
   enableRejectionMemory: boolean;
@@ -92,13 +97,6 @@ export interface SnoozedTab {
   url: string;
   title: string;
   wakeAt: number;
-}
-
-// --- Merge/Split Suggestions ---
-
-export interface MergeSplitResult {
-  merges: { group1: string; group2: string; overlap: number }[];
-  splits: { group: string; tabCount: number; domainCount: number }[];
 }
 
 export interface DomainRule {
@@ -177,6 +175,18 @@ export interface ExportData {
   rejections?: RejectionEntry[];
 }
 
+// --- Group Drift ---
+
+/**
+ * Outcome of the last drift sweep, persisted so the popup can show it on open.
+ * The popup is torn down whenever it closes, so it cannot hold this itself.
+ */
+export interface DriftReport {
+  driftedGroups: string[];
+  /** Epoch millis of the sweep, or null when no sweep has ever run. */
+  checkedAt: number | null;
+}
+
 // --- Defaults ---
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -188,6 +198,9 @@ export const DEFAULT_SETTINGS: Settings = {
   silentAutoAdd: false,
   autoPinApps: false,
   staleTabThresholdHours: 48,
+  // Off by default: closing tabs unattended is destructive and irreversible, so
+  // it has to be something the user opts into rather than something they opt out of.
+  enableStalePurge: false,
   enableCorrectionTracking: true,
   enableRejectionMemory: true,
   enableGroupDrift: false,
@@ -244,7 +257,6 @@ export type MessageType =
   | { type: 'import-data'; data: ExportData }
   | { type: 'test-model' }
   | { type: 'check-apple-ai' }
-  | { type: 'consolidate-windows' }
   | { type: 'snooze-tabs'; tabIds: number[]; wakeAt: number }
   | { type: 'purge-stale' }
   | { type: 'focus-group' }
@@ -257,7 +269,6 @@ export type MessageType =
   | { type: 'record-corrections'; corrections: CorrectionEntry }
   | { type: 'record-rejections'; rejections: RejectionEntry[] }
   | { type: 'check-group-drift' }
-  | { type: 'merge-split-suggestions' }
   | { type: 'search-tabs'; query: string }
   | { type: 'get-group-stats' }
-  | { type: 'status'; status: string; suggestions?: GroupSuggestion[]; error?: string; duplicates?: TabInfo[][]; stats?: Stats; usage?: UsageTotals; data?: ExportData; chatResponse?: string; markdown?: string; workspaceNames?: string[]; count?: number; drifted?: boolean; driftedGroups?: string[]; mergeSplit?: MergeSplitResult; available?: boolean; reason?: string; tabResults?: Array<{ id: number; title: string; url: string; groupName: string; groupId: number }>; groupStats?: Array<{ name: string; color: Color; tabCount: number; domains: string[] }> };
+  | { type: 'status'; status: string; suggestions?: GroupSuggestion[]; error?: string; duplicates?: TabInfo[][]; stats?: Stats; usage?: UsageTotals; data?: ExportData; chatResponse?: string; markdown?: string; workspaceNames?: string[]; count?: number; drifted?: boolean; driftedGroups?: string[]; available?: boolean; reason?: string; tabResults?: Array<{ id: number; title: string; url: string; groupName: string; groupId: number }>; groupStats?: Array<{ name: string; color: Color; tabCount: number; domains: string[] }> };

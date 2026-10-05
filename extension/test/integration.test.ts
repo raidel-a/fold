@@ -266,31 +266,6 @@ describe('E2E Integration: Message dispatch → Background → Storage', () => {
     expect(listRes.workspaceNames).not.toContain('to-delete');
   });
 
-  // ─── Merge/Split suggestions ───────────────────────────────────────────────
-
-  it('merge-split-suggestions returns empty when no groups', async () => {
-    vi.mocked(chrome.tabGroups.query).mockResolvedValue([]);
-    const res = await sendMsg({ type: 'merge-split-suggestions' });
-    expect(res.mergeSplit.merges).toHaveLength(0);
-    expect(res.mergeSplit.splits).toHaveLength(0);
-  });
-
-  it('merge-split-suggestions detects high domain overlap as merge candidate', async () => {
-    vi.mocked(chrome.tabGroups.query).mockResolvedValue([
-      { id: 1, title: 'Dev', windowId: 1 },
-      { id: 2, title: 'Work', windowId: 1 },
-    ] as any);
-    vi.mocked(chrome.tabs.query).mockImplementation(async (q: any) => {
-      if (q?.groupId === 1) return [{ id: 10, url: 'https://github.com', groupId: 1 }] as any;
-      if (q?.groupId === 2) return [{ id: 20, url: 'https://github.com', groupId: 2 }] as any;
-      return [];
-    });
-
-    const res = await sendMsg({ type: 'merge-split-suggestions' });
-    expect(res.mergeSplit.merges.length).toBeGreaterThan(0);
-    expect(res.mergeSplit.merges[0].overlap).toBeGreaterThan(60);
-  });
-
   // ─── Search Tabs ──────────────────────────────────────────────────────────
 
   it('search-tabs returns matching tabs', async () => {

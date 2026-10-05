@@ -164,6 +164,103 @@ describe('Options Page', () => {
     expect(spies.saveSettings).toHaveBeenCalled();
   });
 
+  it('purges stale tabs on demand and reports how many closed', async () => {
+    mockWorkerMessages({ 'purge-stale': { status: 'done', count: 3 } });
+    await loadOptionsPage();
+
+    (document.getElementById('purge-stale-now') as HTMLButtonElement).click();
+    await tick();
+
+    const status = document.getElementById('purge-stale-status')!;
+    expect(status.textContent).toBe('Closed 3 tabs.');
+    expect(status.dataset.tone).toBe('ok');
+  });
+
+  it('says so when there was nothing stale to close', async () => {
+    mockWorkerMessages({ 'purge-stale': { status: 'done', count: 0 } });
+    await loadOptionsPage();
+
+    (document.getElementById('purge-stale-now') as HTMLButtonElement).click();
+    await tick();
+
+    expect(document.getElementById('purge-stale-status')!.textContent).toBe('Nothing stale to close.');
+  });
+
+  it('saves the threshold before purging, so a fresh slider value is used', async () => {
+    mockWorkerMessages({ 'purge-stale': { status: 'done', count: 0 } });
+    const spies = await loadOptionsPage();
+
+    const threshold = document.getElementById('staleTabThresholdHours') as HTMLInputElement;
+    threshold.value = '2';
+    (document.getElementById('purge-stale-now') as HTMLButtonElement).click();
+    await tick();
+
+    // The click path calls save() directly rather than relying on the debounce.
+    expect(spies.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ staleTabThresholdHours: 2 }),
+    );
+  });
+
+  it('surfaces a purge failure instead of claiming success', async () => {
+    mockWorkerMessages({ 'purge-stale': { status: 'error', error: 'no window' } });
+    await loadOptionsPage();
+
+    (document.getElementById('purge-stale-now') as HTMLButtonElement).click();
+    await tick();
+
+    const status = document.getElementById('purge-stale-status')!;
+    expect(status.textContent).toBe('no window');
+    expect(status.dataset.tone).toBe('stop');
+  });
+
+  it('reports drifted groups after a sweep', async () => {
+    mockWorkerMessages({
+      'check-group-drift': { status: 'done', drifted: true, driftedGroups: ['Reading', 'Work'] },
+      'get-group-stats': { status: 'done', groupStats: [
+        { name: 'Reading', color: 'blue', tabCount: 12, domains: ['news.com'] },
+        { name: 'Work', color: 'red', tabCount: 4, domains: ['slack.com', 'linear.app'] },
+      ] },
+    });
+    await loadOptionsPage();
+
+    (document.getElementById('check-drift-now') as HTMLButtonElement).click();
+    await tick();
+
+    const status = document.getElementById('drift-status')!;
+    expect(status.textContent).toBe('2 groups drifted: Reading, Work');
+    expect(status.dataset.tone).toBe('stop');
+  });
+
+  it('says every group holds together when nothing drifted', async () => {
+    mockWorkerMessages({
+      'check-group-drift': { status: 'done', drifted: false, driftedGroups: [] },
+      'get-group-stats': { status: 'done', groupStats: [] },
+    });
+    await loadOptionsPage();
+
+    (document.getElementById('check-drift-now') as HTMLButtonElement).click();
+    await tick();
+
+    expect(document.getElementById('drift-status')!.textContent).toBe('Every group still holds together.');
+  });
+
+  it('lists group contents widest first, truncating long domain lists', async () => {
+    mockWorkerMessages({
+      'get-group-stats': { status: 'done', groupStats: [
+        { name: 'Small', color: 'grey', tabCount: 2, domains: ['a.com'] },
+        { name: 'Big', color: 'blue', tabCount: 40, domains: ['a.com', 'b.com', 'c.com', 'd.com', 'e.com', 'f.com'] },
+      ] },
+    });
+    await loadOptionsPage();
+    await tick();
+
+    const rows = document.querySelectorAll('#group-stats .stat-line');
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain('Big');
+    expect(rows[0].textContent).toContain('+2');
+    expect(rows[1].textContent).toContain('Small');
+  });
+
   it('manages domain rules', async () => {
     const spies = await loadOptionsPage([
       { domain: 'github.com', groupName: 'Dev', color: 'blue' },

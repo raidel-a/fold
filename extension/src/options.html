@@ -185,6 +185,18 @@
     min-width: 190px;
     justify-content: flex-end;
   }
+  /* The stale row carries a slider, its readout and an action button, so it
+   * needs more room than the standard control cell. */
+  .row-control--wide { min-width: 340px; flex-wrap: wrap; }
+  .row-status {
+    font-size: 11.5px;
+    color: var(--label-secondary);
+    min-height: 15px;
+  }
+  .row-status:not(:empty) { padding-bottom: 10px; }
+  .row-status[data-tone="ok"] { color: var(--status-ready); }
+  .row-status[data-tone="stop"] { color: var(--status-stop); }
+  .row-status[data-tone="busy"] { color: var(--label-secondary); }
 
   /* Sliders: a real track with the value in tabular figures so it does not
    * jitter while dragging. */
@@ -477,6 +489,15 @@
   .stat-line:last-child { border-bottom: none; padding-bottom: 0; }
   .stat-line dt { color: var(--label-secondary); }
   .stat-line dd { font-variant-numeric: tabular-nums; font-weight: 560; }
+  /* Colour chip beside a group name, matching the popup's group swatches. */
+  .group-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 7px;
+    vertical-align: middle;
+  }
 
   .inline-form { display: flex; gap: 8px; align-items: center; }
   .inline-form .fold-field { flex: 1; }
@@ -602,8 +623,9 @@
           </div>
           <div class="row">
             <div class="row-text"><div class="row-label">Stale tab age</div><div class="row-desc">Tabs untouched for this long can be purged.</div></div>
-            <div class="row-control"><input type="range" id="staleTabThresholdHours" min="1" max="168" value="48" /><span class="readout" id="staleVal">48</span></div>
+            <div class="row-control row-control--wide"><input type="range" id="staleTabThresholdHours" min="1" max="168" value="48" /><span class="readout" id="staleVal">48</span><button class="fold-btn" id="purge-stale-now">Close stale now</button></div>
           </div>
+          <div class="row-status" id="purge-stale-status" role="status" aria-live="polite"></div>
         </div>
 
         <div class="card-section">
@@ -625,6 +647,10 @@
           <div class="row">
             <div class="row-text"><div class="row-label">Auto-pin web apps</div><div class="row-desc">Keep Gmail, Calendar, Slack and Spotify pinned to the left.</div></div>
             <div class="row-control"><label class="switch"><input type="checkbox" id="autoPinApps" /><span class="switch-track"></span></label></div>
+          </div>
+          <div class="row">
+            <div class="row-text"><div class="row-label">Purge stale tabs daily</div><div class="row-desc">Close tabs past the stale age once a day, on its own. Pins and the active tab are never touched.</div></div>
+            <div class="row-control"><label class="switch"><input type="checkbox" id="enableStalePurge" /><span class="switch-track"></span></label></div>
           </div>
           <div class="row">
             <div class="row-text"><div class="row-label">Smart ungrouping</div><div class="row-desc">Drop a tab from its group when you navigate somewhere unrelated.</div></div>
@@ -677,6 +703,19 @@
             <div class="row-text"><div class="row-label">Drift threshold</div><div class="row-desc">Coherence below which a group gets flagged.</div></div>
             <div class="row-control"><input type="range" id="groupDriftThreshold" min="20" max="80" value="50" step="5" /><span class="readout" id="driftThresholdVal">50</span></div>
           </div>
+        </div>
+
+        <div class="card-section">
+          <h2>Group health</h2>
+          <p class="section-note">A group drifts when the tabs inside it stop sharing a domain.</p>
+
+          <div class="row">
+            <div class="row-text"><div class="row-label">Sweep now</div><div class="row-desc">Check every group against the drift threshold.</div></div>
+            <div class="row-control"><button class="fold-btn" id="check-drift-now">Check for drift</button></div>
+          </div>
+          <div class="row-status" id="drift-status" role="status" aria-live="polite"></div>
+
+          <dl class="stat-rows" id="group-stats"></dl>
         </div>
 
         <div class="card-section">

@@ -8,7 +8,6 @@ import type { TabInfo, GroupSuggestion } from '../src/types';
 // Background registers listeners — we'll import the module functions directly
 import {
   autoPinImportantApps,
-  consolidateWindows,
   deleteAllTabGroups,
   focusCurrentGroup,
   getTabs, organize, applyGroups, findDuplicateTabs,
@@ -17,6 +16,8 @@ import {
   isImportantAppUrl,
   isTabUrlAllowed,
   purgeStaleTabs,
+  setupStaleAlarm,
+  setupDriftAlarm,
   sortCurrentGroupsByDomain,
   snapshotCurrentState, restoreSnapshot, undoLastGrouping,
   _resetAutoCheckCooldown,
@@ -354,34 +355,78 @@ describe('power tools', () => {
     await saveSettings({ ...DEFAULT_SETTINGS, ...TEST_SETTINGS, autoPinApps: false, staleTabThresholdHours: 24 });
   });
 
-  it('consolidates tabs from other windows into the current one', async () => {
-    vi.mocked(chrome.windows.getCurrent).mockResolvedValue({ id: 1 } as any);
-    vi.mocked(chrome.windows.getAll).mockResolvedValue([
-      { id: 1, tabs: [{ id: 1, url: 'https://here.com' }] },
-      { id: 2, tabs: [{ id: 21, url: 'https://one.com' }, { id: 22, url: 'chrome://extensions' }] },
-      { id: 3, tabs: [{ id: 31, url: 'https://two.com' }] },
-    ] as any);
+  it('schedules no sweep while the opt-in is off', async () => {
+    await saveSettings({ ...DEFAULT_SETTINGS, ...TEST_SETTINGS, enableStalePurge: false });
+    await setupStaleAlarm();
 
-    const count = await consolidateWindows();
-
-    expect(count).toBe(2);
-    expect(chrome.tabs.move).toHaveBeenCalledWith([21], { windowId: 1, index: -1 });
-    expect(chrome.tabs.move).toHaveBeenCalledWith([31], { windowId: 1, index: -1 });
+    expect(chrome.alarms.clear).toHaveBeenCalledWith('fold-stale');
+    expect(chrome.alarms.create).not.toHaveBeenCalledWith(
+      'fold-stale', expect.anything(),
+    );
   });
 
+  it('schedules a daily sweep once the opt-in is on', async () => {
+    await saveSettings({ ...DEFAULT_SETTINGS, ...TEST_SETTINGS, enableStalePurge: true });
+    await setupStaleAlarm();
+
+    expect(chrome.alarms.create).toHaveBeenCalledWith('fold-stale', {
+      delayInMinutes: 1440,
+      periodInMinutes: 1440,
+    });
+  });
+
+  it('schedules no drift sweep while the opt-in is off', async () => {
+    await saveSettings({ ...DEFAULT_SETTINGS, ...TEST_SETTINGS, enableGroupDrift: false });
+    await setupDriftAlarm();
+
+    expect(chrome.alarms.clear).toHaveBeenCalledWith('fold-drift');
+    expect(chrome.alarms.create).not.toHaveBeenCalledWith(
+      'fold-drift', expect.anything(),
+    );
+  });
+
+  it('schedules a drift sweep on its own offset once the opt-in is on', async () => {
+    await saveSettings({ ...DEFAULT_SETTINGS, ...TEST_SETTINGS, enableGroupDrift: true });
+    await setupDriftAlarm();
+
+    // Offset from the stale sweep so the two do not land in the same hour.
+    expect(chrome.alarms.create).toHaveBeenCalledWith('fold-drift', {
+      delayInMinutes: 360,
+      periodInMinutes: 1440,
+    });
+  });
 
   it('purges tabs older than the stale threshold', async () => {
     const now = Date.now();
-    vi.mocked(chrome.tabs.query).mockResolvedValue([
-      { id: 1, title: 'Active', url: 'https://active.com', active: true, pinned: false, lastAccessed: now - 1000, groupId: -1 },
-      { id: 2, title: 'Old', url: 'https://old.com', active: false, pinned: false, lastAccessed: now - (30 * 60 * 60 * 1000), groupId: -1 },
-      { id: 3, title: 'Pinned', url: 'https://pinned.com', active: false, pinned: true, lastAccessed: now - (30 * 60 * 60 * 1000), groupId: -1 },
+    // A service worker woken by an alarm has no current window, so the sweep
+    // enumerates windows instead.
+    vi.mocked(chrome.windows.getAll).mockResolvedValue([
+      { id: 1, tabs: [
+        { id: 1, title: 'Active', url: 'https://active.com', active: true, pinned: false, lastAccessed: now - 1000 },
+        { id: 2, title: 'Old', url: 'https://old.com', active: false, pinned: false, lastAccessed: now - (30 * 60 * 60 * 1000) },
+        { id: 3, title: 'Pinned', url: 'https://pinned.com', active: false, pinned: true, lastAccessed: now - (30 * 60 * 60 * 1000) },
+        { id: 4, title: 'Internal', url: 'chrome://extensions', active: false, pinned: false, lastAccessed: now - (30 * 60 * 60 * 1000) },
+      ] },
     ] as any);
 
     const count = await purgeStaleTabs();
 
     expect(count).toBe(1);
     expect(chrome.tabs.remove).toHaveBeenCalledWith([2]);
+  });
+
+  it('sweeps every window, not just the last focused one', async () => {
+    const now = Date.now();
+    const old = now - (30 * 60 * 60 * 1000);
+    vi.mocked(chrome.windows.getAll).mockResolvedValue([
+      { id: 1, tabs: [{ id: 10, url: 'https://a.com', active: false, pinned: false, lastAccessed: old }] },
+      { id: 2, tabs: [{ id: 20, url: 'https://b.com', active: false, pinned: false, lastAccessed: old }] },
+    ] as any);
+
+    const count = await purgeStaleTabs();
+
+    expect(count).toBe(2);
+    expect(chrome.tabs.remove).toHaveBeenCalledWith([10, 20]);
   });
 
   it('focuses the active group by collapsing the others', async () => {

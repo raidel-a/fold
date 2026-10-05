@@ -72,6 +72,9 @@ const inAutoPinApps = $<HTMLInputElement>('autoPinApps');
 const inSmartUngroup = $<HTMLInputElement>('smartUngroup');
 const inStaleTabThresholdHours = $<HTMLInputElement>('staleTabThresholdHours');
 const outStale = $<HTMLSpanElement>('staleVal');
+const inEnableStalePurge = $<HTMLInputElement>('enableStalePurge');
+const btnPurgeStaleNow = $<HTMLButtonElement>('purge-stale-now');
+const purgeStaleStatus = $<HTMLDivElement>('purge-stale-status');
 const inEnableCorrectionTracking = $<HTMLInputElement>('enableCorrectionTracking');
 const inEnableRejectionMemory = $<HTMLInputElement>('enableRejectionMemory');
 const inEnableGroupDrift = $<HTMLInputElement>('enableGroupDrift');
@@ -200,6 +203,7 @@ async function save() {
     silentAutoAdd: inSilentAutoAdd.checked,
     autoPinApps: inAutoPinApps.checked,
     staleTabThresholdHours: Number(inStaleTabThresholdHours.value) || DEFAULT_SETTINGS.staleTabThresholdHours,
+    enableStalePurge: inEnableStalePurge.checked,
     enableCorrectionTracking: inEnableCorrectionTracking.checked,
     enableRejectionMemory: inEnableRejectionMemory.checked,
     enableGroupDrift: inEnableGroupDrift.checked,
@@ -243,6 +247,7 @@ async function load() {
   
   inStaleTabThresholdHours.value = String(s.staleTabThresholdHours);
   outStale.textContent = String(s.staleTabThresholdHours);
+  inEnableStalePurge.checked = s.enableStalePurge;
 
   // Smart learning
   inEnableCorrectionTracking.checked = s.enableCorrectionTracking;
@@ -262,6 +267,9 @@ async function load() {
 
   // Domain rules
   await renderDomainRules();
+
+  // Group health
+  await renderGroupStats();
 
   // Stats & usage
   await refreshData();
@@ -450,6 +458,30 @@ importFile.addEventListener('change', async () => {
   importFile.value = '';
 });
 
+// Purge stale tabs on demand. Saving first matters: the worker reads the
+// threshold from settings, and a user who just moved the slider should not have
+// to wait for the debounced save before their click takes effect.
+btnPurgeStaleNow.addEventListener('click', async () => {
+  btnPurgeStaleNow.disabled = true;
+  purgeStaleStatus.textContent = 'Looking for stale tabs…';
+  purgeStaleStatus.dataset.tone = 'busy';
+
+  await save();
+  const res = await sendMsg({ type: 'purge-stale' });
+  btnPurgeStaleNow.disabled = false;
+
+  if (res?.error) {
+    purgeStaleStatus.textContent = res.error;
+    purgeStaleStatus.dataset.tone = 'stop';
+    return;
+  }
+  const count = res?.count ?? 0;
+  purgeStaleStatus.textContent = count === 0
+    ? 'Nothing stale to close.'
+    : `Closed ${count} tab${count === 1 ? '' : 's'}.`;
+  purgeStaleStatus.dataset.tone = 'ok';
+});
+
 // --- Pinned Groups ---
 
 /** Pinned groups are short names, so they read as chips rather than form rows. */
@@ -509,6 +541,7 @@ for (const b of rangeBindings) {
 const autoSaveElements = [
   inMaxGroups, inMaxTitleLength, inAutoTrigger, inThreshold,
   inMergeMode, inSilentAutoAdd, inAutoPinApps, inSmartUngroup, inStaleTabThresholdHours,
+  inEnableStalePurge,
   inEnableCorrectionTracking, inEnableRejectionMemory, inEnableGroupDrift,
   inEnablePatternMining, inGroupDriftThreshold,
   inReorgSchedule, inReorgTime,
@@ -522,7 +555,89 @@ for (const el of autoSaveElements) {
   }
 }
 
-// --- Group Stats ---
+// --- Group health ---
+//
+// Drift detection and the per-group table answer different questions, so they
+// stay separate: the sweep says which groups have stopped making sense, the
+// table says what each group currently holds.
+
+const btnDriftNow = $<HTMLButtonElement>('check-drift-now');
+const driftStatus = $<HTMLDivElement>('drift-status');
+const groupStatsEl = $<HTMLDListElement>('group-stats');
+
+/** Shape of one row from the `get-group-stats` reply. */
+interface GroupStatRow {
+  name: string;
+  color: Color;
+  tabCount: number;
+  domains: string[];
+}
+
+function renderDriftResult(drifted: boolean, driftedGroups: string[]): void {
+  if (driftedGroups.length === 0) {
+    driftStatus.textContent = 'Every group still holds together.';
+    driftStatus.dataset.tone = 'ok';
+    return;
+  }
+  const list = driftedGroups.join(', ');
+  driftStatus.textContent =
+    `${driftedGroups.length} group${driftedGroups.length === 1 ? '' : 's'} drifted: ${list}`;
+  driftStatus.dataset.tone = drifted ? 'stop' : 'ok';
+}
+
+async function renderGroupStats(): Promise<void> {
+  const res = await sendMsg({ type: 'get-group-stats' });
+  groupStatsEl.innerHTML = '';
+
+  if (res?.error) {
+    const line = document.createElement('div');
+    line.className = 'stat-line';
+    line.textContent = res.error;
+    groupStatsEl.appendChild(line);
+    return;
+  }
+
+  const rows = (res?.groupStats ?? []) as GroupStatRow[];
+  if (rows.length === 0) {
+    const line = document.createElement('div');
+    line.className = 'stat-line';
+    line.textContent = 'No groups yet.';
+    groupStatsEl.appendChild(line);
+    return;
+  }
+
+  // Widest first: a group holding the most tabs is the one worth reading about.
+  for (const row of [...rows].sort((a, b) => b.tabCount - a.tabCount)) {
+    const line = document.createElement('div');
+    line.className = 'stat-line';
+    const domains = row.domains.length === 0
+      ? 'no readable domains'
+      : row.domains.slice(0, 4).join(', ') + (row.domains.length > 4 ? ` +${row.domains.length - 4}` : '');
+    line.innerHTML = `<dt><span class="group-dot" style="background: var(--group-${row.color})"></span>${esc(row.name)}</dt>`
+      + `<dd>${row.tabCount} tab${row.tabCount === 1 ? '' : 's'} · ${esc(domains)}</dd>`;
+    groupStatsEl.appendChild(line);
+  }
+}
+
+btnDriftNow.addEventListener('click', async () => {
+  btnDriftNow.disabled = true;
+  driftStatus.textContent = 'Checking groups…';
+  driftStatus.dataset.tone = 'busy';
+
+  // Save first: the sweep reads groupDriftThreshold out of settings, and a
+  // threshold moved moments ago should apply to this click.
+  await save();
+  const res = await sendMsg({ type: 'check-group-drift' });
+  btnDriftNow.disabled = false;
+
+  if (res?.error) {
+    driftStatus.textContent = res.error;
+    driftStatus.dataset.tone = 'stop';
+    return;
+  }
+  renderDriftResult(res?.drifted === true, res?.driftedGroups ?? []);
+  await renderGroupStats();
+});
 
 
 // --- Power Tools ---

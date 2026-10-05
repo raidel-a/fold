@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { resetAllMocks } from './setup';
 import * as storage from '../src/storage';
+import { DEFAULT_SETTINGS } from '../src/types';
 
 const html = readFileSync(resolve(__dirname, '../src/popup.html'), 'utf-8');
 
@@ -16,12 +17,24 @@ const tick = async (n = 15) => {
  * against a fresh DOM. The storage spy must land on the instance popup.ts will
  * actually import, which resetModules makes a new one.
  */
-async function loadPopup(_unused?: unknown, pending?: unknown[]) {
+async function loadPopup(
+  _unused?: unknown,
+  pending?: unknown[],
+  drift?: { enabled?: boolean; report?: { driftedGroups: string[]; checkedAt: number | null } },
+) {
   vi.resetModules();
   const mod = await import('../src/storage');
   vi.spyOn(mod, 'getSuggestions').mockResolvedValue(
     (pending ?? [{ name: 'Pending Group', color: 'blue', tabs: [{ id: 1, url: 'https://tab1.com', title: 'Tab 1' }] }]) as any,
   );
+  if (drift) {
+    vi.spyOn(mod, 'getSettings').mockResolvedValue({
+      ...DEFAULT_SETTINGS, enableGroupDrift: drift.enabled ?? false,
+    } as any);
+    vi.spyOn(mod, 'getLastDrift').mockResolvedValue(
+      drift.report ?? { driftedGroups: [], checkedAt: null },
+    );
+  }
   await import('../src/popup');
   await tick(20);
   return mod;
@@ -51,6 +64,36 @@ describe('Popup Page', () => {
       if (msg.type === 'get-stats') cb({ stats: { totalOrganizations: 1, totalTabsGrouped: 5 } });
       else cb({ status: 'done', count: 5 });
     });
+  });
+
+  it('summarises the last drift sweep for the user', async () => {
+    await loadPopup(undefined, [], {
+      enabled: true,
+      report: { driftedGroups: ['Reading', 'Work', 'News'], checkedAt: Date.now() },
+    });
+
+    const notice = document.getElementById('drift-notice')!;
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toBe('3 groups drifted — Reading, Work +1 more');
+  });
+
+  it('stays quiet when drift detection is switched off', async () => {
+    await loadPopup(undefined, [], {
+      enabled: false,
+      report: { driftedGroups: ['Reading'], checkedAt: Date.now() },
+    });
+
+    // A stale report from before the toggle was turned off must not resurface.
+    expect(document.getElementById('drift-notice')!.hidden).toBe(true);
+  });
+
+  it('stays quiet when no sweep has ever run', async () => {
+    await loadPopup(undefined, [], {
+      enabled: true,
+      report: { driftedGroups: [], checkedAt: null },
+    });
+
+    expect(document.getElementById('drift-notice')!.hidden).toBe(true);
   });
 
   it('renders pending suggestions from storage on open', async () => {

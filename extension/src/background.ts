@@ -2,7 +2,6 @@ import type {
   Color,
   GroupSuggestion,
   MessageType,
-  MergeSplitResult,
   TabInfo,
   UndoSnapshot,
   Workspace,
@@ -44,6 +43,7 @@ import {
   getGroupColorPrefs,
   saveGroupColorPref,
   getSnoozedTabs,
+  saveLastDrift,
   addSnoozedTab,
   removeSnoozedTab,
   getWorkspaces,
@@ -56,6 +56,8 @@ import { checkAppleAI, testConnection } from './llm';
 
 const ALARM_NAME = 'fold-check';
 const REORG_ALARM_NAME = 'fold-reorg';
+const STALE_ALARM_NAME = 'fold-stale';
+const DRIFT_ALARM_NAME = 'fold-drift';
 const SNOOZE_ALARM_PREFIX = 'fold-snooze-';
 const CTX_ADD_TO_GROUP_ID = 'fold-add-to-group';
 const ACTION_CONTEXT_MENUS: chrome.contextMenus.CreateProperties[] = [
@@ -67,7 +69,6 @@ const ACTION_CONTEXT_MENUS: chrome.contextMenus.CreateProperties[] = [
 
 // In-memory state (session-only, not persisted)
 const openerMap = new Map<number, number>();
-const tabActivationTimes = new Map<number, number>();
 
 const IMPORTANT_APP_PATTERNS = [
   'mail.google.com',
@@ -559,48 +560,42 @@ export async function findDuplicateTabs(): Promise<TabInfo[][]> {
   return findDuplicates(await getTabs());
 }
 
-export async function consolidateWindows(): Promise<number> {
-  const currentWindowId = await getCurrentWindowId();
-  const windows = await chrome.windows.getAll({ populate: true });
-  let moved = 0;
-
-  for (const win of windows) {
-    if (win.id === undefined || win.id === currentWindowId) continue;
-    const tabIds = (win.tabs || [])
-      .filter(tab => tab.id !== undefined && isTabUrlAllowed(tab.url) && !tab.pinned)
-      .map(tab => tab.id!);
-
-    if (tabIds.length === 0) continue;
-    await chrome.tabs.move(tabIds, { windowId: currentWindowId, index: -1 });
-    moved += tabIds.length;
-  }
-
-  await autoPinImportantApps(currentWindowId);
-  return moved;
-}
-
-
-
+/**
+ * Closes tabs that have gone untouched for longer than the configured threshold.
+ *
+ * Driven by a daily alarm, so this cannot use `currentWindow`: a service worker
+ * woken by an alarm has no current window, and the query would fail. Enumerating
+ * windows is also the right scope for an unattended sweep.
+ *
+ * Deliberately not gated on `enableStalePurge`. That setting governs the daily
+ * sweep; this is also the path behind the settings-page button, which is the
+ * user asking for it directly.
+ */
 export async function purgeStaleTabs(): Promise<number> {
   const settings = await getSettings();
   const thresholdMs = settings.staleTabThresholdHours * 60 * 60 * 1000;
   const now = Date.now();
-  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const windows = await chrome.windows.getAll({ populate: true });
 
-  const toRemove = tabs
-    .filter(tab =>
-      tab.id !== undefined &&
-      isTabUrlAllowed(tab.url) &&
-      !tab.active &&
-      !tab.pinned &&
-      tab.lastAccessed != null && tab.lastAccessed > 0 &&
-      (now - tab.lastAccessed) > thresholdMs,
-    )
-    .map(tab => tab.id!);
+  const toRemove: number[] = [];
+  for (const win of windows) {
+    for (const tab of win.tabs || []) {
+      if (tab.id === undefined) continue;
+      if (!isTabUrlAllowed(tab.url)) continue;
+      if (tab.active || tab.pinned) continue;
+      if (tab.lastAccessed == null || tab.lastAccessed <= 0) continue;
+      if (now - tab.lastAccessed > thresholdMs) toRemove.push(tab.id);
+    }
+  }
 
   if (toRemove.length) {
     try {
       await chrome.tabs.remove(toRemove);
+      // Loud on purpose: this closes tabs the user never asked to lose, so it
+      // should be traceable in the service worker log.
+      console.warn(
+        `[Fold] Closed ${toRemove.length} tab(s) untouched for over ${settings.staleTabThresholdHours}h.`,
+      );
     } catch { /* some tabs may have been closed already */ }
   }
 
@@ -783,56 +778,6 @@ export async function checkGroupDrift(): Promise<{ drifted: boolean; driftedGrou
   return { drifted: driftedGroups.length > 0, driftedGroups };
 }
 
-// --- Merge/Split Suggestions ---
-
-export async function getMergeSplitSuggestions(): Promise<MergeSplitResult> {
-  const windowId = await getCurrentWindowId();
-  const groups = await chrome.tabGroups.query({ windowId });
-  const groupDomains: Map<string, Set<string>> = new Map();
-  const groupTabCounts: Map<string, number> = new Map();
-
-  for (const group of groups) {
-    const name = group.title || `Group ${group.id}`;
-    const tabs = await chrome.tabs.query({ groupId: group.id });
-    const domains = new Set<string>();
-    for (const tab of tabs) {
-      if (tab.url) {
-        const d = hostnameFromUrl(tab.url);
-        if (d) domains.add(d);
-      }
-    }
-    groupDomains.set(name, domains);
-    groupTabCounts.set(name, tabs.length);
-  }
-
-  const merges: MergeSplitResult['merges'] = [];
-  const names = Array.from(groupDomains.keys());
-
-  for (let i = 0; i < names.length; i++) {
-    for (let j = i + 1; j < names.length; j++) {
-      const a = groupDomains.get(names[i])!;
-      const b = groupDomains.get(names[j])!;
-      let intersection = 0;
-      for (const d of a) if (b.has(d)) intersection++;
-      const union = new Set([...a, ...b]).size;
-      const overlap = union > 0 ? intersection / union : 0;
-      if (overlap > 0.6) {
-        merges.push({ group1: names[i], group2: names[j], overlap: Math.round(overlap * 100) });
-      }
-    }
-  }
-
-  const splits: MergeSplitResult['splits'] = [];
-  for (const [name, domains] of groupDomains) {
-    const tabCount = groupTabCounts.get(name) ?? 0;
-    if (tabCount > 10 && domains.size > 5) {
-      splits.push({ group: name, tabCount, domainCount: domains.size });
-    }
-  }
-
-  return { merges, splits };
-}
-
 // --- Scheduled Re-org ---
 
 export async function setupReorgAlarm(): Promise<void> {
@@ -857,6 +802,53 @@ export async function setupReorgAlarm(): Promise<void> {
   const periodInMinutes = settings.reorgSchedule === 'daily' ? 1440 : 10080;
 
   chrome.alarms.create(REORG_ALARM_NAME, { delayInMinutes, periodInMinutes });
+}
+
+/**
+ * Sweeps untouched tabs once a day, but only while the user has opted in. Kept
+ * independent of the re-org alarm so the two schedules cannot drift into each
+ * other, and given an explicit first delay so enabling it never closes anything
+ * straight away. The threshold is read at fire time, so changing it needs no
+ * reschedule.
+ */
+export async function setupStaleAlarm(): Promise<void> {
+  const settings = await getSettings();
+
+  if (!settings.enableStalePurge) {
+    chrome.alarms.clear(STALE_ALARM_NAME);
+    return;
+  }
+
+  const day = 1440;
+  chrome.alarms.create(STALE_ALARM_NAME, { delayInMinutes: day, periodInMinutes: day });
+}
+
+/**
+ * Daily group-drift sweep, gated on the same opt-in. Kept as its own alarm rather
+ * than folded into the stale sweep so the two can be enabled independently, and
+ * on a different period so a large window does not cost two long sweeps back to
+ * back. Six hours off the stale sweep, to stay clear of the same hour.
+ */
+export async function setupDriftAlarm(): Promise<void> {
+  const settings = await getSettings();
+
+  if (!settings.enableGroupDrift) {
+    chrome.alarms.clear(DRIFT_ALARM_NAME);
+    return;
+  }
+
+  chrome.alarms.create(DRIFT_ALARM_NAME, { delayInMinutes: 360, periodInMinutes: 1440 });
+}
+
+/**
+ * Runs a sweep and persists the outcome. Persisting here rather than at the
+ * caller is what lets the popup show a result it never computed: the popup is
+ * destroyed on close and cannot hold state between visits.
+ */
+async function runDriftSweep(): Promise<{ drifted: boolean; driftedGroups: string[] }> {
+  const result = await checkGroupDrift();
+  await saveLastDrift(result.driftedGroups);
+  return result;
 }
 
 async function checkAutoTrigger(): Promise<void> {
@@ -905,13 +897,6 @@ chrome.runtime.onMessage.addListener((msg: MessageType, _sender, sendResponse) =
 
   if (msg.type === 'find-duplicates') {
     findDuplicateTabs().then(duplicates => sendResponse({ type: 'status', status: 'done', duplicates }));
-    return true;
-  }
-
-  if (msg.type === 'consolidate-windows') {
-    consolidateWindows()
-      .then(count => sendResponse({ type: 'status', status: 'done', count }))
-      .catch(error => sendResponse({ type: 'status', status: 'error', error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
 
@@ -1008,15 +993,8 @@ chrome.runtime.onMessage.addListener((msg: MessageType, _sender, sendResponse) =
   }
 
   if (msg.type === 'check-group-drift') {
-    checkGroupDrift()
+    runDriftSweep()
       .then(result => sendResponse({ type: 'status', status: 'done', ...result }))
-      .catch(error => sendResponse({ type: 'status', status: 'error', error: error instanceof Error ? error.message : String(error) }));
-    return true;
-  }
-
-  if (msg.type === 'merge-split-suggestions') {
-    getMergeSplitSuggestions()
-      .then(mergeSplit => sendResponse({ type: 'status', status: 'done', mergeSplit }))
       .catch(error => sendResponse({ type: 'status', status: 'error', error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
@@ -1153,6 +1131,8 @@ chrome.commands?.onCommand?.addListener((command: string) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: 2 });
+  void setupStaleAlarm();
+  void setupDriftAlarm();
   setupReorgAlarm();
   return rebuildContextMenus();
 });
@@ -1199,6 +1179,14 @@ chrome.alarms.onAlarm.addListener(alarm => {
         });
       }
     });
+  }
+  if (alarm.name === STALE_ALARM_NAME) {
+    // Best-effort like every other alarm body: a failed sweep must not throw
+    // back into the event loop.
+    purgeStaleTabs().catch(() => {});
+  }
+  if (alarm.name === DRIFT_ALARM_NAME) {
+    runDriftSweep().catch(() => {});
   }
   if (alarm.name.startsWith(SNOOZE_ALARM_PREFIX)) {
     const snoozeId = alarm.name.slice(SNOOZE_ALARM_PREFIX.length);
@@ -1253,23 +1241,16 @@ chrome.tabs.onRemoved?.addListener((tabId: number) => {
   // Clean up in-memory maps — no auto-check needed on removal
   if (tabId !== undefined) {
     openerMap.delete(tabId);
-    tabActivationTimes.delete(tabId);
-  }
-});
-
-chrome.tabs.onActivated?.addListener((activeInfo: { tabId: number }) => {
-  if (activeInfo?.tabId !== undefined) {
-    tabActivationTimes.set(activeInfo.tabId, Date.now());
-    if (tabActivationTimes.size > MAX_TRACKED_TAB_RELATIONS) {
-      const oldest = tabActivationTimes.keys().next().value;
-      if (oldest !== undefined) tabActivationTimes.delete(oldest);
-    }
   }
 });
 
 chrome.storage?.onChanged?.addListener((changes, areaName) => {
   if (areaName === 'sync' && changes.settings) {
     setupReorgAlarm();
+    // The opt-ins gate the alarms' existence, not just their behaviour, so the
+    // toggles have to reschedule rather than wait for the next fire.
+    void setupStaleAlarm();
+    void setupDriftAlarm();
   }
 });
 

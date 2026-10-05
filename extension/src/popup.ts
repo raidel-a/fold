@@ -1,6 +1,6 @@
 import type { Color, GroupSuggestion, MessageType, CorrectionEntry, RejectionEntry } from './types';
 import { COLORS } from './types';
-import { getSuggestions, getSettings, saveSettings } from './storage';
+import { getSuggestions, getSettings, saveSettings, getLastDrift } from './storage';
 import { checkAppleAI } from './llm';
 import { applyTheme, watchAppearance } from './theme';
 
@@ -449,12 +449,38 @@ async function refreshModelStatus() {
 
 // --- Init ---
 
+const driftNotice = $<HTMLDivElement>('drift-notice');
+
+/**
+ * Surfaces the last drift sweep's verdict. Reads the persisted report rather than
+ * running a sweep, because the popup is destroyed on close and a sweep is far too
+ * much work to repeat on every open. Stays hidden unless detection is switched
+ * on, a sweep has actually run, and it found something.
+ */
+async function refreshDriftNotice(): Promise<void> {
+  driftNotice.hidden = true;
+
+  const settings = await getSettings();
+  if (!settings.enableGroupDrift) return;
+
+  const report = await getLastDrift();
+  if (!report.checkedAt || report.driftedGroups.length === 0) return;
+
+  const count = report.driftedGroups.length;
+  driftNotice.textContent =
+    `${count} group${count === 1 ? '' : 's'} drifted — ${report.driftedGroups.slice(0, 2).join(', ')}`
+    + `${count > 2 ? ` +${count - 2} more` : ''}`;
+  driftNotice.title = `Groups no longer sharing a domain: ${report.driftedGroups.join(', ')}`;
+  driftNotice.hidden = false;
+}
+
 (async () => {
   // Theme first: it only sets CSS variables, so the panel never paints in the
   // wrong colors. Neither it nor the status probe should block first paint.
   void applyTheme();
   watchAppearance();
   void refreshModelStatus();
+  void refreshDriftNotice();
 
   const pending = await getSuggestions();
   if (pending?.length) {
