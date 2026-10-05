@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in Fold is broken
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fold requires macOS 26+ on Apple silicon with Apple Intelligence enabled, and
+        the native host installed via `scripts/install-native-host.sh`. Please check
+        Settings → Model reads "Apple AI is ready" before filing, since most reports
+        turn out to be a missing host.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+      placeholder: Clicking "Fold all tabs" returns "Native host unavailable".
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Fold version
+      description: The version field in extension/manifest.json
+      placeholder: 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and chip
+      placeholder: macOS 27.2, M1 MacBook Air
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Helium 0.18.3.1 (Chromium 154)
+    validations:
+      required: true
+
+  - type: textarea
+    id: tab-count
+    attributes:
+      label: Roughly how many tabs were open
+      placeholder: 6, or about 80
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything from the browser console or service worker log
+      description: Right-click the extension → Inspect → Console, then paste anything relevant.
+      render: shell
+    validations:
+      required: false

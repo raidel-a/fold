@@ -42,6 +42,12 @@ new path so it can recompute the extension ID:
 ./scripts/install-native-host.sh /path/to/other/dist
 ```
 
+## Contributing
+
+Issues and pull requests are welcome. Pull requests are the only way in: `main` is
+protected, CI must pass, and I merge after review. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and scope.
+
 ## Why a native host
 
 Chromium extensions run in a sandbox with no access to Swift frameworks, and Apple

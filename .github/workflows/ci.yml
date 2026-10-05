@@ -1,0 +1,41 @@
+# This repository is a fork of gTabs and is kept private-ish in practice: it is
+# published so people can read and report issues, but nothing lands without a
+# review.
+#
+# Pull requests are the only way in. Direct pushes to main are blocked, and
+# merging requires an approving review from someone other than the author.
+
+name: Protect main
+
+on:
+  push:
+    branches: [main]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      # The extension is a subdirectory, so npm has to run there.
+      - run: npm ci
+        working-directory: ./extension
+
+      - run: npm test
+        working-directory: ./extension
+
+      - run: npm run build
+        working-directory: ./extension

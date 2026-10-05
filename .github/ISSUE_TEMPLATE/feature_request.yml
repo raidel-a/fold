@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fold runs entirely on macOS's built-in model and makes no network calls, so
+        proposals that need a server or an API key will not be accepted.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not the feature you want.
+      placeholder: I lose track of which of my 80 tabs belong to which project, and the
+        groups drift out of date within a day.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Fold to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Fold?
+      options:
+        - Popup
+        - Settings
+        - Grouping behaviour
+        - Learning and memory
+        - Rules (pinned groups, domain rules)
+        - Tools
+        - Native host or install
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried instead?
+    validations:
+      required: false

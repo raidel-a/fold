@@ -12,9 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    defaults:
-      run: ./extension
-
     steps:
       - uses: actions/checkout@v4
 
@@ -25,18 +22,22 @@ jobs:
           cache-dependency-path: extension/package-lock.json
 
       - run: npm ci
+        working-directory: ./extension
       - run: npm test
+        working-directory: ./extension
 
       - name: Build extension
         run: npm run build
+        working-directory: ./extension
 
       - name: Package zip
         run: npm run package
+        working-directory: ./extension
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: fold-extension.zip
+          files: extension/fold-extension.zip
           generate_release_notes: true
 
       - name: Explain the native host requirement
