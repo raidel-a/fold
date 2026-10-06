@@ -262,19 +262,8 @@
   }
 
   /* Swatch, not a dropdown: the nine group colors are all visible at once, so
-   * picking is one click instead of two. */
-  .swatch {
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: 1px solid var(--control-ring);
-    border-radius: 50%;
-    background: var(--group-grey, var(--label-tertiary));
-    cursor: default;
-    flex-shrink: 0;
-    transition: transform var(--duration-quick) var(--ease-out);
-  }
-  .swatch:active { transform: scale(0.9); }
+   * picking is one click instead of two. Styled in fold.css, shared with the
+   * settings page's domain rules. */
 
   .card-tools { display: flex; gap: 1px; }
 

@@ -204,6 +204,31 @@ body {
 }
 .fold-status[data-state='stopped']::before { background: var(--status-stop); }
 
+/* Group colour swatch. Shared by the popup cards and the settings-page domain
+   rules, which are the same control: a button that cycles the nine colours.
+   Lives here rather than in one page's inline styles so both are styled by a
+   single definition. */
+.swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--control-ring);
+  border-radius: 50%;
+  background: var(--group-grey, var(--label-tertiary));
+  flex-shrink: 0;
+  /* A pointer because it is a control: both call sites attach a click handler
+     that cycles to the next colour. */
+  cursor: pointer;
+  transition: transform var(--duration-quick) var(--ease-out);
+}
+/* Both call sites set their background inline, which outranks a stylesheet
+   hover colour, so the hover affordance is a scale rather than a fill. */
+.swatch:hover { transform: scale(1.08); }
+.swatch:active { transform: scale(0.9); }
+.swatch:focus-visible {
+  outline: 2px solid var(--fold-accent);
+  outline-offset: 2px;
+}
 @keyframes fold-pulse {
   0%, 100% { opacity: 0.4; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.15); }
