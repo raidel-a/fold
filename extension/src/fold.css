@@ -204,6 +204,24 @@ body {
 }
 .fold-status[data-state='stopped']::before { background: var(--status-stop); }
 
+/* Accent provenance. --fold-accent is what the interface is painted with;
+   --fold-accent-fallback is the host's answer when macOS reported the system
+   default rather than a colour the user picked. Both are always set, so this
+   only ever describes which one came from where, never which exists. Shown as a
+   hollow ring so it reads as "no accent chosen" rather than another swatch. */
+.fold-accent-source {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--fold-accent);
+  border: 1px solid var(--control-ring);
+}
+[data-accent-is-fallback='true'] .fold-accent-source {
+  background: transparent;
+  border: 2px solid var(--fold-accent);
+}
+
 /* Group colour swatch. Shared by the popup cards and the settings-page domain
    rules, which are the same control: a button that cycles the nine colours.
    Lives here rather than in one page's inline styles so both are styled by a
@@ -229,6 +247,7 @@ body {
   outline: 2px solid var(--fold-accent);
   outline-offset: 2px;
 }
+
 @keyframes fold-pulse {
   0%, 100% { opacity: 0.4; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.15); }

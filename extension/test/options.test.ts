@@ -164,6 +164,38 @@ describe('Options Page', () => {
     expect(spies.saveSettings).toHaveBeenCalled();
   });
 
+  it('names the macOS accent when it is the user\'s own choice', async () => {
+    vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
+      (_h: string, msg: any, cb: Function) => {
+        if (msg?.op === 'status') cb({ ok: true, available: true });
+        else if (msg?.op === 'theme') {
+          cb({ ok: true, accent: '#FF9500', isDark: false, accentIsFallback: false, groupColors: {} });
+        } else cb({ ok: true, content: 'OK' });
+      },
+    );
+    await loadOptionsPage();
+
+    expect(document.getElementById('accent-source-desc')!.textContent)
+      .toBe('Your macOS accent colour.');
+  });
+
+  it('says so when macOS is falling back to the system accent', async () => {
+    vi.mocked((chrome.runtime as any).sendNativeMessage).mockImplementation(
+      (_h: string, msg: any, cb: Function) => {
+        if (msg?.op === 'status') cb({ ok: true, available: true });
+        else if (msg?.op === 'theme') {
+          cb({ ok: true, accent: '#0091FF', isDark: false, accentIsFallback: true, groupColors: {} });
+        } else cb({ ok: true, content: 'OK' });
+      },
+    );
+    await loadOptionsPage();
+
+    expect(document.getElementById('accent-source-desc')!.textContent)
+      .toBe('The system default accent. macOS has no accent of your own selected.');
+    expect(document.getElementById('accent-source-dot')!.getAttribute('aria-label'))
+      .toBe('System default accent');
+  });
+
   it('purges stale tabs on demand and reports how many closed', async () => {
     mockWorkerMessages({ 'purge-stale': { status: 'done', count: 3 } });
     await loadOptionsPage();

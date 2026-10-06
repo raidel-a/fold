@@ -2,6 +2,7 @@ import type { Settings, DomainRule, Color, MessageType } from './types';
 import { DEFAULT_SETTINGS, COLORS } from './types';
 import { getSettings, saveSettings, getDomainRules, saveDomainRules } from './storage';
 import { applyTheme, watchAppearance } from './theme';
+import { fetchTheme } from './llm';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -57,6 +58,28 @@ const modelDetail = $<HTMLDivElement>('model-detail');
 const sidebarStatus = $<HTMLSpanElement>('model-status');
 const modelSetup = $<HTMLDivElement>('model-setup');
 const modelSetupReason = $<HTMLDivElement>('model-setup-reason');
+const accentSourceDesc = $<HTMLDivElement>('accent-source-desc');
+const accentSourceDot = $<HTMLSpanElement>('accent-source-dot');
+
+/**
+ * Explains where the accent came from. The host reports whether macOS gave the
+ * user's chosen colour or the system default, which is worth surfacing: a user
+ * who picked an accent expects to see it, and "this is just the system colour"
+ * is otherwise indistinguishable from a working accent.
+ */
+async function renderAccentSource(): Promise<void> {
+  const theme = await fetchTheme();
+  const isFallback = theme.accentIsFallback === true;
+
+  accentSourceDesc.textContent = isFallback
+    ? 'The system default accent. macOS has no accent of your own selected.'
+    : 'Your macOS accent colour.';
+  accentSourceDot.setAttribute(
+    'aria-label',
+    isFallback ? 'System default accent' : 'Your macOS accent colour',
+  );
+}
+
 const testBtn = $<HTMLButtonElement>('test-btn');
 const testResult = $<HTMLSpanElement>('test-result');
 const inMaxGroups = $<HTMLInputElement>('maxGroups');
@@ -795,4 +818,5 @@ void applyTheme();
 watchAppearance();
 
 load();
+void renderAccentSource();
 refreshToolWorkspaces();

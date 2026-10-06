@@ -81,8 +81,15 @@ describe('applyTheme', () => {
   it('keeps the CSS default when the host has no accent', async () => {
     mockNative({ ok: true, accent: '', isDark: true, groupColors: {} });
     await applyTheme();
-    // An empty value would otherwise wipe the fallback and leave tint-less UI.
-    expect(document.documentElement.style.getPropertyValue('--fold-accent')).toBe('');
+    // An empty inline value would otherwise wipe the stylesheet default and
+    // leave tint-less UI, so the macOS blue is written instead.
+    expect(document.documentElement.style.getPropertyValue('--fold-accent')).toBe('#007aff');
+  });
+
+  it('always sets the fallback variable so the accent indicator can read it', async () => {
+    mockNative({ ok: true, accent: '#FF9500', isDark: true, accentIsFallback: false, groupColors: {} });
+    await applyTheme();
+    expect(document.documentElement.style.getPropertyValue('--fold-accent-fallback')).toBe('#FF9500');
   });
 
   it('notes when the accent is a system fallback rather than the user\x27s choice', async () => {

@@ -15,10 +15,12 @@ export async function applyTheme(): Promise<void> {
   const root = document.documentElement;
 
   // An empty accent means the host had nothing to say; keep the CSS default.
-  if (theme.accent) {
-    root.style.setProperty('--fold-accent', theme.accent);
-    root.style.setProperty('--fold-accent-fallback', theme.accent);
-  }
+  // --fold-accent-fallback tracks the same value: it exists so the accent
+  // provenance indicator can show which colour macOS reported, and is set
+  // unconditionally so it never goes stale when the host stops answering.
+  const accent = theme.accent || '#007aff';
+  root.style.setProperty('--fold-accent', accent);
+  root.style.setProperty('--fold-accent-fallback', accent);
 
   root.dataset.appearance = theme.isDark ? 'dark' : 'light';
   root.dataset.accentIsFallback = String(theme.accentIsFallback);
