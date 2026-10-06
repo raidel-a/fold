@@ -1137,25 +1137,30 @@ chrome.runtime.onInstalled.addListener(() => {
   return rebuildContextMenus();
 });
 
-chrome.contextMenus?.onClicked?.addListener((info) => {
+// The clicked tab arrives as the second argument, not as `info.tab`, which is
+// not part of OnClickData. Reading info.tab meant the tab was always undefined
+// and the "Add tab to group..." items did nothing.
+chrome.contextMenus?.onClicked?.addListener((info, tab) => {
   if (info.menuItemId === 'fold-organize') void organize().catch(() => {});
   if (info.menuItemId === 'fold-organize-ungrouped') void organize(true).catch(() => {});
   if (info.menuItemId === 'fold-undo') void undoLastGrouping().catch(() => {});
   if (info.menuItemId === 'fold-duplicates') void findDuplicateTabs().catch(() => {});
 
+  const tabId = tab?.id;
+  if (tabId === undefined) return;
+
   const menuId = String(info.menuItemId);
-  if (menuId === `${CTX_ADD_TO_GROUP_ID}-new` && info.tab?.id !== undefined) {
-    const tabId = info.tab.id;
+  if (menuId === `${CTX_ADD_TO_GROUP_ID}-new`) {
     (async () => {
       const newGroupId = await groupTabsSafe([tabId]);
       if (newGroupId === null) return;
       await chrome.tabGroups.update(newGroupId, { title: 'New Group', collapsed: false });
       await rebuildContextMenus();
     })();
-  } else if (menuId.startsWith(`${CTX_ADD_TO_GROUP_ID}-`) && info.tab?.id !== undefined) {
+  } else if (menuId.startsWith(`${CTX_ADD_TO_GROUP_ID}-`)) {
     const groupId = Number(menuId.slice(CTX_ADD_TO_GROUP_ID.length + 1));
     if (Number.isInteger(groupId) && groupId > 0 && groupId < MAX_CONTEXT_GROUP_ID) {
-      void groupTabsSafe([info.tab.id], groupId);
+      void groupTabsSafe([tabId], groupId);
     }
   }
 });
