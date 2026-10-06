@@ -126,7 +126,10 @@ export function computeDecayedWeight(count: number, lastUsed: number, now = Date
 
 async function migrateAffinity(): Promise<void> {
   const versionData = await chrome.storage.local.get({ [K.affinityVersion]: 0 });
-  if (versionData[K.affinityVersion] >= 2) return;
+  // get() returns an untyped record, so the value needs asserting before it can
+  // be compared. The default above means an absent key reads as 0.
+  const version = versionData[K.affinityVersion] as number;
+  if (version >= 2) return;
 
   const oldData = await chrome.storage.local.get({ [K.affinity]: {} });
   const oldAffinity = oldData[K.affinity] as AffinityMap;
@@ -354,7 +357,10 @@ export async function saveUndoSnapshot(snapshot: UndoSnapshot | null): Promise<v
 
 export async function getStats(): Promise<Stats> {
   const data = await chrome.storage.local.get({ [K.stats]: DEFAULT_STATS });
-  return { ...DEFAULT_STATS, ...data[K.stats] };
+  // Stored stats may predate a field, so spread the defaults first. Asserted
+  // because get() hands back an untyped record.
+  const stored = data[K.stats] as Partial<Stats>;
+  return { ...DEFAULT_STATS, ...stored };
 }
 
 export async function incrementStats(tabsGrouped: number): Promise<Stats> {

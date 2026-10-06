@@ -121,7 +121,14 @@ export function isImportantAppUrl(url: string): boolean {
   );
 }
 
-export function isGroupedTab(tab: { groupId?: number | undefined }): tab is { groupId: number } {
+/**
+ * Whether a tab sits in a tab group. Returns a plain boolean rather than a type
+ * predicate on purpose: `chrome.tabs.Tab.groupId` is always a number (`-1` when
+ * ungrouped), so there is no type to narrow to. A predicate claiming
+ * `tab is { groupId: number }` excluded the whole Tab type in the negative
+ * branch, collapsing every `!isGroupedTab(t)` filter element to `never`.
+ */
+export function isGroupedTab(tab: { groupId?: number | undefined }): boolean {
   return tab.groupId !== undefined && tab.groupId !== -1;
 }
 
@@ -435,7 +442,9 @@ export async function organize(
       const colorPrefs = await getGroupColorPrefs();
       preMatched = Array.from(matched.entries()).map(([name, matchedTabs]) => ({
         name,
-        color: (colorPrefs[name] ?? 'grey') as const,
+        // colorPrefs is already Record<string, Color>, so the fallback widens to
+        // Color without needing a cast.
+        color: colorPrefs[name] ?? 'grey',
         tabs: matchedTabs,
       }));
       tabsForLLM = remaining;
